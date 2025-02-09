@@ -5,7 +5,7 @@ const Thread = std.Thread;
 
 const skip_list_inc = @import("concurrent_skip_list_inc.zig");
 
-pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: T, rhs: T) bool, NodeAlloc: mem.Allocator, comptime MAX_HEIGHT: i32) type {
+pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T) bool, NodeAlloc: mem.Allocator, comptime MAX_HEIGHT: i32) type {
     return struct {
         const Self = @This();
         const NodeType = skip_list_inc.SkipListNode(T, NodeAlloc);
@@ -25,7 +25,7 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: T, rhs: T) bool, NodeAl
         }
 
         pub fn deinit(self: *Self) void {
-            const current: ?*NodeType = self.head.load(.unordered);
+            var current: ?*NodeType = self.head.load(.unordered);
             while (current != null) {
                 const tmp = current.?.skip(0);
                 current.?.destroy();
@@ -40,50 +40,50 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: T, rhs: T) bool, NodeAl
             return self.size() == 0;
         }
 
-        fn greater(data: *const value_type, node: *const NodeType) bool {
-            return node and Comp()(node.data(), data);
+        fn greater(data: *const value_type, node: ?*const NodeType) bool {
+            return node != null and Comp(node.?.data(), data);
         }
 
-        fn less(data: *const value_type, node: *const NodeType) bool {
-            return (node == null) or Comp()(data, node.data());
+        fn less(data: *const value_type, node: ?*const NodeType) bool {
+            return (node == null) or Comp(data, node.?.data());
         }
 
-        fn findInsertionPoint(cur: *NodeType, cur_layer: i32, data: *const value_type, preds: []*NodeType, succs: []*NodeType) i32 {
+        fn findInsertionPoint(cur: *NodeType, cur_layer: usize, data: *const value_type, preds: []*NodeType, succs: []*NodeType) i32 {
             var foundLayer: i32 = -1;
             var pred: *NodeType = cur;
             var foundNode: ?*NodeType = null;
 
-            var layer: i32 = cur_layer;
+            var layer: usize = cur_layer;
             while (layer >= 0) : (layer -= 1) {
-                var node = pred.skip(layer);
+                var node = pred.skip(layer).?;
                 while (greater(data, node)) {
                     pred = node;
-                    node = node.skip(layer);
+                    node = node.skip(layer).?;
                 }
                 if (foundLayer == -1 and !less(data, node)) { // the two keys equal
-                    foundLayer = layer;
+                    foundLayer = @intCast(layer);
                     foundNode = node;
                 }
-                preds[layer] = pred;
+                preds[@intCast(layer)] = pred;
 
                 // if found, succs[0..foundLayer] need to point to the cached foundNode,
                 // as foundNode might be deleted at the same time thus pred.skip() can
                 // return nullptr or another node.
-                succs[layer] = if (foundNode != null) foundNode else node;
+                succs[@intCast(layer)] = if (foundNode != null) foundNode.? else node;
             }
             return foundLayer;
         }
 
-        fn height(self: *const Self) i32 {
-            return self.head.load(.acquired).height();
+        fn height(self: *const Self) usize {
+            return self.head.load(.acquire).height();
         }
 
-        fn maxLayer(self: *const Self) i32 {
+        fn maxLayer(self: *const Self) usize {
             return self.height() - 1;
         }
 
         fn incrementSize(self: *Self, delta: i32) isize {
-            return self.size.fetch_add(delta, .relaxed) + delta;
+            return self.size.fetchAdd(delta, .monotonic) + delta;
         }
 
         // Returns the node if found, nullptr otherwise.
@@ -98,13 +98,13 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: T, rhs: T) bool, NodeAl
         // lock all the necessary nodes for changing (adding or removing) the list.
         // returns true if all the lock acquired successfully and the related nodes
         // are all validate (not in certain pending states), false otherwise.
-        fn lockNodesForChange(nodeHeight: i32, guards: [MAX_HEIGHT]Thread.Mutex, preds: [MAX_HEIGHT]*NodeType, succs: [MAX_HEIGHT]*NodeType, adding: bool) bool {
+        fn lockNodesForChange(nodeHeight: usize, guards: []?*Thread.Mutex, preds: []*NodeType, succs: []*NodeType, adding: bool) bool {
             var pred: *NodeType = undefined;
-            var succ: *NodeType = undefined;
+            var succ: ?*NodeType = null;
             var prevPred: *NodeType = undefined;
             var valid = true;
 
-            var layer = 0;
+            var layer: usize = 0;
             while (valid and layer < nodeHeight) : (layer += 1) {
                 pred = preds[layer];
                 succ = succs[layer];
@@ -116,24 +116,24 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: T, rhs: T) bool, NodeAl
                     pred.skip(layer) == succ; // check again after locking
 
                 if (adding) { // when adding a node, the succ shouldn't be going away
-                    valid = valid and (succ == null or !succ.markedForRemoval());
+                    valid = valid and (succ == null or !succ.?.markedForRemoval());
                 }
             }
 
             return valid;
         }
 
-        fn addOrGetData(self: *Self, data: *value_type) struct { first: *NodeType, second: isize } {
+        fn addOrGetData(self: *Self, data: *const value_type) struct { first: *NodeType, second: isize } {
             var preds: [MAX_HEIGHT]*NodeType = undefined;
-            const succs: [MAX_HEIGHT]*NodeType = undefined;
+            var succs: [MAX_HEIGHT]*NodeType = undefined;
             var newNode: *NodeType = undefined;
             var newSize: isize = 0;
             while (true) {
-                var max_layer: i32 = 0;
-                const layer = findInsertionPointGetMaxLayer(data, preds, succs, &max_layer);
+                var max_layer: usize = 0;
+                const layer = self.findInsertionPointGetMaxLayer(data, &preds, &succs, &max_layer);
 
                 if (layer >= 0) {
-                    const nodeFound = succs[layer];
+                    const nodeFound = succs[@intCast(layer)];
                     if (nodeFound.markedForRemoval()) {
                         continue; // if it's getting deleted retry finding node.
                     }
@@ -146,16 +146,16 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: T, rhs: T) bool, NodeAl
                 const nodeHeight =
                     skip_list_inc.SkipListRandomHeight.instance().getHeight(max_layer + 1);
 
-                const guards: [MAX_HEIGHT]Thread.Mutex = undefined;
-                if (!lockNodesForChange(nodeHeight, guards, preds, succs)) {
+                var guards: [MAX_HEIGHT]?*Thread.Mutex = [1]?*Thread.Mutex{null} ** MAX_HEIGHT;
+                if (!lockNodesForChange(nodeHeight, &guards, &preds, &succs, true)) {
                     continue; // give up the locks and retry until all valid
                 }
 
                 // locks acquired and all valid, need to modify the links under the locks.
-                newNode = NodeType.create(nodeHeight, data, null);
-                for (0..nodeHeight) |k| {
-                    newNode.setSkip(k, succs[k]);
-                    preds[k].setSkip(k, newNode);
+                newNode = NodeType.create(@intCast(nodeHeight), data, null);
+                for (0..@intCast(nodeHeight)) |k| {
+                    newNode.setSkip(@intCast(k), succs[k]);
+                    preds[k].setSkip(@intCast(k), newNode);
                 }
 
                 newNode.setFullyLinked();
@@ -163,7 +163,7 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: T, rhs: T) bool, NodeAl
                 break;
             }
 
-            const hgt = height();
+            const hgt = self.height();
             const sizeLimit =
                 skip_list_inc.SkipListRandomHeight.instance().getSizeLimit(hgt);
 
@@ -183,7 +183,7 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: T, rhs: T) bool, NodeAl
 
             while (true) {
                 var max_layer: i32 = 0;
-                const layer: i32 = findInsertionPointGetMaxLayer(data, preds, succs, &max_layer);
+                const layer: i32 = self.findInsertionPointGetMaxLayer(data, preds, succs, &max_layer);
                 if (!isMarked and (layer < 0 or !okToDelete(succs[layer], layer))) {
                     return false;
                 }
@@ -217,12 +217,12 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: T, rhs: T) bool, NodeAl
             return true;
         }
 
-        fn first(self: *const Self) *const value_type {
-            var node = self.head_.load(.acquire).skip(0);
-            return if (node != 0) &node.data() else null;
+        fn first(self: *const Self) ?*value_type {
+            var node = self.head.load(.acquire).skip(0);
+            return if (node != null) node.?.data() else null;
         }
 
-        fn last(self: *const Self) *const value_type {
+        fn last(self: *const Self) ?*value_type {
             var pred = self.head.load(.acquire);
             var node: *NodeType = null;
 
@@ -242,8 +242,8 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: T, rhs: T) bool, NodeAl
         }
 
         // find node for insertion/deleting
-        fn findInsertionPointGetMaxLayer(self: *const Self, data: *const value_type, preds: []*NodeType, succs: []*NodeType, max_layer: *i32) i32 {
-            max_layer.* = maxLayer();
+        fn findInsertionPointGetMaxLayer(self: *const Self, data: *const value_type, preds: []*NodeType, succs: []*NodeType, max_layer: *usize) i32 {
+            max_layer.* = self.maxLayer();
             return findInsertionPoint(self.head.load(.acquire), max_layer.*, data, preds, succs);
         }
 
@@ -295,30 +295,30 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: T, rhs: T) bool, NodeAl
             return node;
         }
 
-        fn growHeight(self: *Self, node_height: i32) void {
+        fn growHeight(self: *Self, node_height: usize) void {
             var oldHead = self.head.load(.acquire);
             if (oldHead.height() >= node_height) { // someone else already did this
                 return;
             }
 
             var newHead =
-                NodeType.create(node_height, value_type(), .{ .isHead = true });
+                NodeType.create(@intCast(node_height), undefined, .{ .isHead = true });
 
             { // need to guard the head node in case others are adding/removing
                 // nodes linked to the head.
                 var g = oldHead.acquireGuard();
                 g.lock();
                 defer g.unlock();
-                newHead.copyHead(oldHead);
+                _ = newHead.copyHead(oldHead);
                 const expected = oldHead;
-                if (!self.head.?.cmpxchgStrong(expected, newHead, .release)) {
+                if (self.head.cmpxchgStrong(expected, newHead, .release, .monotonic) != null) {
                     // if someone has already done the swap, just return.
                     newHead.destroy();
                     return;
                 }
                 oldHead.setMarkedForRemoval();
             }
-            recycle(oldHead);
+            self.recycle(oldHead);
         }
 
         fn recycle(self: *Self, node: *NodeType) void {
@@ -341,12 +341,12 @@ pub fn Accessor(SkipListType: type) type {
             const ret = Self{
                 .sl_ = sl,
             };
-            ret.sl_.recycler.addRef();
+            _ = ret.sl_.recycler.addRef();
             return ret;
         }
 
         pub fn deinit(self: *Self) void {
-            self.sl_.recycler.releaseRef();
+            _ = self.sl_.recycler.releaseRef();
         }
 
         pub fn empty(self: *const Self) bool {
@@ -404,7 +404,7 @@ pub fn Accessor(SkipListType: type) type {
         //   last() is not guaranteed to be the max_element(), and both of them can
         //   be invalid (i.e. nullptr), so we name them differently from front() and
         //   tail() here.
-        pub fn first(self: *const Self) *const key_type {
+        pub fn first(self: *const Self) ?*const key_type {
             return self.sl_.first();
         }
         pub fn last(self: *const Self) *const key_type {
@@ -438,7 +438,7 @@ pub fn Accessor(SkipListType: type) type {
             return self.sl_.find(data);
         }
         pub fn add(self: *Self, data: *const key_type) bool {
-            return self.sl_.addOrGetData(data).second;
+            return self.sl_.addOrGetData(data).second != 0;
         }
         pub fn remove(self: *Self, data: *const key_type) bool {
             return self.sl_.remove(data);

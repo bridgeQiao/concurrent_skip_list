@@ -9,7 +9,7 @@ const NodeType = struct {
     first: i32 = 0,
     second: i32 = 0,
 
-    fn less(lhs: Self, rhs: Self) bool {
+    fn less(lhs: *const Self, rhs: *const Self) bool {
         return lhs.first < rhs.first;
     }
 };
