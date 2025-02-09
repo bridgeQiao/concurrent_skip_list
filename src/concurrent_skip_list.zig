@@ -12,22 +12,23 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: T, rhs: T) bool, NodeAl
         const value_type = T;
         const key_type = T;
 
-        recycler: skip_list_inc.NodeRecycler(NodeType, NodeAlloc) = undefined,
+        recycler: skip_list_inc.NodeRecycler(NodeType, NodeAlloc),
         head: atomic.Value(*NodeType) = undefined,
         size: atomic.Value(isize) = undefined,
 
-        pub fn init(self: *Self) void {
-            self.recycler = skip_list_inc.NodeRecycler(NodeType, NodeAlloc){};
-            self.recycler.init();
-            self.head.store(skip_list_inc.SkipListNode(T, NodeAlloc).create(MAX_HEIGHT, &value_type{}, .{ .isHead = true }), .release);
-            self.size.store(0, .release);
+        pub fn init() Self {
+            return Self{
+                .recycler = skip_list_inc.NodeRecycler(NodeType, NodeAlloc).init(),
+                .head = atomic.Value(*NodeType){ .raw = skip_list_inc.SkipListNode(T, NodeAlloc).create(MAX_HEIGHT, undefined, .{ .isHead = true }) },
+                .size = atomic.Value(isize){ .raw = 0 },
+            };
         }
 
         pub fn deinit(self: *Self) void {
-            const current = self.head.load(.relaxed);
+            const current: ?*NodeType = self.head.load(.unordered);
             while (current != null) {
-                const tmp = current.skip(0);
-                current.destroy();
+                const tmp = current.?.skip(0);
+                current.?.destroy();
                 current = tmp;
             }
         }
@@ -334,11 +335,14 @@ pub fn Accessor(SkipListType: type) type {
         const key_type = SkipListType.key_type;
         const NodeType = SkipListType.NodeType;
 
-        sl_: *SkipListType = undefined,
+        sl_: *SkipListType,
 
-        pub fn init(self: *Self, sl: *SkipListType) void {
-            self.sl_ = sl;
-            self.sl_.recycler.addRef();
+        pub fn init(sl: *SkipListType) Self {
+            const ret = Self{
+                .sl_ = sl,
+            };
+            ret.sl_.recycler.addRef();
+            return ret;
         }
 
         pub fn deinit(self: *Self) void {
@@ -370,7 +374,7 @@ pub fn Accessor(SkipListType: type) type {
             const head = self.sl_.head.load(.acquire);
             return head.next();
         }
-        pub fn end(self: *const Self) *NodeType {
+        pub fn end() *NodeType {
             return null;
         }
 

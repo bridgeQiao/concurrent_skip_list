@@ -16,9 +16,9 @@ pub fn SkipListNode(ValueType: type, allocator: std.mem.Allocator) type {
         height_: u8,
         spinLock_: Thread.Mutex,
         data_: ValueType,
-        skip_: std.ArrayList(*Self),
+        skip_: std.ArrayList(?*Self),
 
-        pub fn create(node_height: i32, value_data: *const ValueType, option: ?struct { isHead: bool = false }) *Self {
+        pub fn create(node_height: usize, value_data: *const ValueType, option: ?struct { isHead: bool = false }) *Self {
             var flag: atomic.Value(Flag) = undefined;
             flag.store(.Init, .release);
             if (option) |opt| {
@@ -27,17 +27,17 @@ pub fn SkipListNode(ValueType: type, allocator: std.mem.Allocator) type {
                 }
             }
 
-            var ret = allocator.alloc(Self, 1) catch unreachable;
+            var ret = allocator.create(Self) catch unreachable;
 
-            ret[0] = Self{
+            ret.* = Self{
                 .flags_ = flag,
                 .height_ = @intCast(node_height),
                 .spinLock_ = Thread.Mutex{},
                 .data_ = value_data.*,
-                .skip_ = std.ArrayList(*Self).init(allocator),
+                .skip_ = std.ArrayList(?*Self).init(allocator),
             };
-            ret[0].skip_.resize(@intCast(node_height)) catch unreachable;
-            return &ret[0];
+            ret.skip_.appendNTimes(null, node_height) catch unreachable;
+            return ret;
         }
 
         pub fn destroy(self: *Self) void {
@@ -53,7 +53,7 @@ pub fn SkipListNode(ValueType: type, allocator: std.mem.Allocator) type {
             return self;
         }
 
-        pub inline fn skip(self: *Self, layer: i32) *Self {
+        pub inline fn skip(self: *Self, layer: i32) ?*Self {
             return self.skip_[layer].load(.acquired);
         }
 
@@ -188,26 +188,20 @@ pub const SkipListRandomHeight = struct {
 pub fn NodeRecycler(NodeType: type, NodeAlloc: std.mem.Allocator) type {
     return struct {
         const Self = @This();
-        nodes: *std.ArrayList(*NodeType) = undefined,
-        refs: atomic.Value(i32) = undefined, // current number of visitors to the list
-        dirty: atomic.Value(bool) = undefined, // whether *nodes_ is non-empty
+        nodes: *std.ArrayList(*NodeType),
+        refs_: atomic.Value(i32) = atomic.Value(i32){ .raw = 0 }, // current number of visitors to the list
+        dirty: atomic.Value(bool) = atomic.Value(bool){ .raw = false }, // whether *nodes_ is non-empty
         lock: Thread.Mutex = Thread.Mutex{}, // protects access to *nodes_
 
-        pub fn init(self: *Self) void {
-            self.lock.lock();
-            defer self.lock.unlock();
-
-            if (self.nodes == null) {
-                self.nodes = NodeAlloc.alloc(std.ArrayList(*NodeType), 1) catch unreachable;
-                self.nodes.init(NodeAlloc);
-            }
-            self.refs.store(0, .release);
-            self.dirty.store(false, .release);
+        pub fn init() Self {
+            return Self{
+                .nodes = NodeAlloc.create(std.ArrayList(*NodeType)) catch unreachable,
+            };
         }
 
         pub fn deinit(self: *Self) void {
             self.nodes.deinit();
-            NodeAlloc.free(self.nodes);
+            NodeAlloc.destroy(self.nodes);
         }
 
         pub fn add(self: *Self, node: *NodeType) void {
@@ -223,7 +217,7 @@ pub fn NodeRecycler(NodeType: type, NodeAlloc: std.mem.Allocator) type {
         }
 
         pub fn addRef(self: *Self) i32 {
-            return self.refs.fetchAdd(1, .acq_rel);
+            return self.refs_.fetchAdd(1, .acq_rel);
         }
 
         pub fn releaseRef(self: *Self) i32 {
@@ -231,7 +225,7 @@ pub fn NodeRecycler(NodeType: type, NodeAlloc: std.mem.Allocator) type {
             // misses an opportunity to delete, but that's OK, we'll try again at
             // the next opportunity. It does not harm the thread safety. For this
             // reason, we can use relaxed loads to make the decision.
-            if (!self.dirty.load(.release) || self.refs() > 1) {
+            if (!self.dirty.load(.release) or self.refs() > 1) {
                 return self.refs.fetch_add(-1, .acq_rel);
             }
 
@@ -265,8 +259,8 @@ pub fn NodeRecycler(NodeType: type, NodeAlloc: std.mem.Allocator) type {
             return ret;
         }
 
-        fn getRefs(self: *Self) i32 {
-            return self.refs.load(.release);
+        fn refs(self: *Self) i32 {
+            return self.refs_.load(.release);
         }
     };
 }

@@ -17,12 +17,10 @@ const NodeType = struct {
 pub fn main() !void {
     const SkipListType = skip_list.ConcurrentSkipList(NodeType, &NodeType.less, std.heap.page_allocator, 16);
     const data: NodeType = .{ .first = 30, .second = 30 };
-    var sl = SkipListType{};
-    sl.init();
+    var sl = SkipListType.init();
     defer sl.deinit();
 
-    var access = skip_list.Accessor(SkipListType){};
-    access.init(&sl);
+    var access = skip_list.Accessor(SkipListType).init(&sl);
     _ = access.add(&data);
     std.debug.print("{*}", .{access.first()});
     access.deinit();
