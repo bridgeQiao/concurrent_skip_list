@@ -19,7 +19,7 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
         pub fn init() Self {
             return Self{
                 .recycler = skip_list_inc.NodeRecycler(NodeType, NodeAlloc).init(),
-                .head = atomic.Value(*NodeType){ .raw = skip_list_inc.SkipListNode(T, NodeAlloc).create(MAX_HEIGHT, undefined, .{ .isHead = true }) },
+                .head = atomic.Value(*NodeType){ .raw = NodeType.create(MAX_HEIGHT, null, .{ .isHead = true }) },
                 .size = atomic.Value(isize){ .raw = 0 },
             };
         }
@@ -48,28 +48,29 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
             return (node == null) or Comp(data, node.?.data());
         }
 
-        fn findInsertionPoint(cur: *NodeType, cur_layer: usize, data: *const value_type, preds: []*NodeType, succs: []*NodeType) i32 {
+        fn findInsertionPoint(cur: *NodeType, cur_layer: usize, data: *const value_type, preds: []*NodeType, succs: []?*NodeType) i32 {
             var foundLayer: i32 = -1;
-            var pred: *NodeType = cur;
+            var pred: ?*NodeType = cur;
             var foundNode: ?*NodeType = null;
 
-            var layer: usize = cur_layer;
+            var layer: isize = @intCast(cur_layer);
             while (layer >= 0) : (layer -= 1) {
-                var node = pred.skip(layer).?;
+                const skip_layer: usize = @intCast(layer);
+                var node = pred.?.skip(skip_layer);
                 while (greater(data, node)) {
                     pred = node;
-                    node = node.skip(layer).?;
+                    node = node.?.skip(skip_layer);
                 }
                 if (foundLayer == -1 and !less(data, node)) { // the two keys equal
                     foundLayer = @intCast(layer);
                     foundNode = node;
                 }
-                preds[@intCast(layer)] = pred;
+                preds[skip_layer] = pred.?;
 
                 // if found, succs[0..foundLayer] need to point to the cached foundNode,
                 // as foundNode might be deleted at the same time thus pred.skip() can
                 // return nullptr or another node.
-                succs[@intCast(layer)] = if (foundNode != null) foundNode.? else node;
+                succs[skip_layer] = if (foundNode != null) foundNode.? else node;
             }
             return foundLayer;
         }
@@ -98,7 +99,7 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
         // lock all the necessary nodes for changing (adding or removing) the list.
         // returns true if all the lock acquired successfully and the related nodes
         // are all validate (not in certain pending states), false otherwise.
-        fn lockNodesForChange(nodeHeight: usize, guards: []?*Thread.Mutex, preds: []*NodeType, succs: []*NodeType, adding: bool) bool {
+        fn lockNodesForChange(nodeHeight: usize, guards: []?*Thread.Mutex, preds: []*NodeType, succs: []?*NodeType, adding: bool) bool {
             var pred: *NodeType = undefined;
             var succ: ?*NodeType = null;
             var prevPred: *NodeType = undefined;
@@ -125,7 +126,7 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
 
         fn addOrGetData(self: *Self, data: *const value_type) struct { first: *NodeType, second: isize } {
             var preds: [MAX_HEIGHT]*NodeType = undefined;
-            var succs: [MAX_HEIGHT]*NodeType = undefined;
+            var succs: [MAX_HEIGHT]?*NodeType = [1]?*NodeType{null} ** MAX_HEIGHT;
             var newNode: *NodeType = undefined;
             var newSize: isize = 0;
             while (true) {
@@ -133,7 +134,7 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
                 const layer = self.findInsertionPointGetMaxLayer(data, &preds, &succs, &max_layer);
 
                 if (layer >= 0) {
-                    const nodeFound = succs[@intCast(layer)];
+                    const nodeFound = succs[@intCast(layer)].?;
                     if (nodeFound.markedForRemoval()) {
                         continue; // if it's getting deleted retry finding node.
                     }
@@ -146,7 +147,12 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
                 const nodeHeight =
                     skip_list_inc.SkipListRandomHeight.instance().getHeight(max_layer + 1);
 
-                var guards: [MAX_HEIGHT]?*Thread.Mutex = [1]?*Thread.Mutex{null} ** MAX_HEIGHT;
+                var guards = [1]?*Thread.Mutex{null} ** MAX_HEIGHT;
+                defer {
+                    for (guards) |lock| {
+                        if (lock != null) lock.?.unlock();
+                    }
+                }
                 if (!lockNodesForChange(nodeHeight, &guards, &preds, &succs, true)) {
                     continue; // give up the locks and retry until all valid
                 }
@@ -175,11 +181,16 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
 
         fn remove(self: *Self, data: *const value_type) bool {
             var nodeToDelete: *NodeType = undefined;
-            var nodeGuard: Thread.Mutex = undefined;
+            var nodeGuard: ?*Thread.Mutex = null;
+            defer {
+                if (nodeGuard != null) {
+                    nodeGuard.?.unlock();
+                }
+            }
             var isMarked = false;
             var nodeHeight: i32 = 0;
             var preds: [MAX_HEIGHT]*NodeType = undefined;
-            const succs: [MAX_HEIGHT]*NodeType = undefined;
+            const succs: [MAX_HEIGHT]?*NodeType = [1]?*NodeType{null} ** MAX_HEIGHT;
 
             while (true) {
                 var max_layer: i32 = 0;
@@ -191,7 +202,9 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
                 if (!isMarked) {
                     nodeToDelete = succs[layer];
                     nodeHeight = nodeToDelete.height();
+                    if (nodeGuard != null) nodeGuard.?.unlock();
                     nodeGuard = nodeToDelete.acquireGuard();
+                    defer nodeGuard.unlock();
                     if (nodeToDelete.markedForRemoval()) {
                         return false;
                     }
@@ -200,8 +213,8 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
                 }
 
                 // acquire pred locks from bottom layer up
-                const guards: [MAX_HEIGHT]Thread.Mutex = undefined;
-                if (!lockNodesForChange(nodeHeight, guards, preds, succs, false)) {
+                const guards = [1]?*Thread.Mutex{null} ** MAX_HEIGHT;
+                if (!lockNodesForChange(nodeHeight, guards, ?preds, ?succs, false)) {
                     continue; // this will unlock all the locks
                 }
 
@@ -242,7 +255,7 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
         }
 
         // find node for insertion/deleting
-        fn findInsertionPointGetMaxLayer(self: *const Self, data: *const value_type, preds: []*NodeType, succs: []*NodeType, max_layer: *usize) i32 {
+        fn findInsertionPointGetMaxLayer(self: *const Self, data: *const value_type, preds: []*NodeType, succs: []?*NodeType, max_layer: *usize) i32 {
             max_layer.* = self.maxLayer();
             return findInsertionPoint(self.head.load(.acquire), max_layer.*, data, preds, succs);
         }

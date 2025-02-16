@@ -15,10 +15,10 @@ pub fn SkipListNode(ValueType: type, allocator: std.mem.Allocator) type {
         flags_: atomic.Value(u16),
         height_: u8,
         spinLock_: Thread.Mutex,
-        data_: ValueType,
-        skip_: std.ArrayList(atomic.Value(?*Self)),
+        data_: ValueType = undefined,
+        skip_: std.ArrayList(atomic.Value(?*Self)) = undefined,
 
-        pub fn create(node_height: usize, value_data: *const ValueType, option: ?struct { isHead: bool = false }) *Self {
+        pub fn create(node_height: usize, value_data: ?*const ValueType, option: ?struct { isHead: bool = false }) *Self {
             var flag: atomic.Value(u16) = undefined;
             flag.store(Flag.Init, .release);
             if (option) |opt| {
@@ -33,9 +33,9 @@ pub fn SkipListNode(ValueType: type, allocator: std.mem.Allocator) type {
                 .flags_ = flag,
                 .height_ = @intCast(node_height),
                 .spinLock_ = Thread.Mutex{},
-                .data_ = value_data.*,
-                .skip_ = std.ArrayList(atomic.Value(?*Self)).init(allocator),
             };
+            if (value_data != null) ret.data_ = value_data.?.*;
+            ret.skip_ = std.ArrayList(atomic.Value(?*Self)).init(allocator);
             ret.skip_.appendNTimes(atomic.Value(?*Self){ .raw = null }, node_height) catch unreachable;
             return ret;
         }
@@ -78,7 +78,9 @@ pub fn SkipListNode(ValueType: type, allocator: std.mem.Allocator) type {
             return self.height_;
         }
 
+        // return locked mutex
         pub fn acquireGuard(self: *Self) *Thread.Mutex {
+            self.spinLock_.lock();
             return &self.spinLock_;
         }
 
