@@ -45,30 +45,43 @@ pub fn main() !void {
 
 ## BenchMark
 
-My computer is `Mac mini m2`, 8G memory. Read is better, but write is less. Maybe it's wrong code :(
+My computer is `Mac mini m2`, 8G memory. Use `-Doptimize=ReleaseSafe`, read is better, but write is less.
 
-num thread 4:
+W1 R4:
 
 ```bash
 concurrent test: main.ThreadArgs.Mode.SKIPLIST
-read: 31427253.0 ops/sec
-write: 1992170.4 ops/sec
-total: 33419423.4 ops/sec
+read: 44504008.8 ops/sec
+write: 357190.2 ops/sec
+total: 44861199.0 ops/sec
 concurrent test: main.ThreadArgs.Mode.MAP_MUTEX
-read: 2273837.4 ops/sec
-write: 310903.8 ops/sec
-total: 2584741.2 ops/sec
+read: 1622013.6 ops/sec
+write: 3140.0 ops/sec
+total: 1625153.6 ops/sec
 ```
 
-num thread 8:
+W1 R8:
 
 ```bash
 concurrent test: main.ThreadArgs.Mode.SKIPLIST
-read: 29111447.4 ops/sec
-write: 770173.6 ops/sec
-total: 29881621.0 ops/sec
+read: 42400553.4 ops/sec
+write: 449721.0 ops/sec
+total: 42850274.4 ops/sec
 concurrent test: main.ThreadArgs.Mode.MAP_MUTEX
-read: 5845453.2 ops/sec
-write: 1110479.6 ops/sec
-total: 6955932.8 ops/sec
+read: 6344752.2 ops/sec
+write: 7511.6 ops/sec
+total: 6352263.8 ops/sec
+```
+
+W4 R4:
+
+```bash
+concurrent test: main.ThreadArgs.Mode.SKIPLIST
+read: 28497686.4 ops/sec
+write: 1700419.0 ops/sec
+total: 30198105.4 ops/sec
+concurrent test: main.ThreadArgs.Mode.MAP_MUTEX
+read: 2238460.2 ops/sec
+write: 316186.6 ops/sec
+total: 2554646.8 ops/sec
 ```
