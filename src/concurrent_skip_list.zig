@@ -11,6 +11,7 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
         const NodeType = skip_list_inc.SkipListNode(T, NodeAlloc);
         const value_type = T;
         const key_type = T;
+        const FindType = struct { first: *NodeType, second: i32 };
 
         recycler: skip_list_inc.NodeRecycler(NodeType, NodeAlloc),
         head: atomic.Value(*NodeType) = undefined,
@@ -88,9 +89,9 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
         }
 
         // Returns the node if found, nullptr otherwise.
-        fn find(data: *const value_type) ?*NodeType {
-            var ret = findNode(data);
-            if (ret.second and !ret.first.markedForRemoval()) {
+        pub fn find(self: *Self, data: *const value_type) ?*NodeType {
+            var ret = self.findNode(data);
+            if (ret.second != 0 and !ret.first.markedForRemoval()) {
                 return ret.first;
             }
             return null;
@@ -188,23 +189,26 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
                 }
             }
             var isMarked = false;
-            var nodeHeight: i32 = 0;
+            var nodeHeight: usize = 0;
             var preds: [MAX_HEIGHT]*NodeType = undefined;
-            const succs: [MAX_HEIGHT]?*NodeType = [1]?*NodeType{null} ** MAX_HEIGHT;
+            var succs: [MAX_HEIGHT]?*NodeType = [1]?*NodeType{null} ** MAX_HEIGHT;
 
             while (true) {
-                var max_layer: i32 = 0;
-                const layer: i32 = self.findInsertionPointGetMaxLayer(data, preds, succs, &max_layer);
-                if (!isMarked and (layer < 0 or !okToDelete(succs[layer], layer))) {
+                var max_layer: usize = 0;
+                const layer: i32 = self.findInsertionPointGetMaxLayer(data, &preds, &succs, &max_layer);
+                if (!isMarked and (layer < 0 or !okToDelete(succs[@intCast(layer)].?, layer))) {
                     return false;
                 }
 
                 if (!isMarked) {
-                    nodeToDelete = succs[layer];
+                    nodeToDelete = succs[@intCast(layer)].?;
                     nodeHeight = nodeToDelete.height();
                     if (nodeGuard != null) nodeGuard.?.unlock();
                     nodeGuard = nodeToDelete.acquireGuard();
-                    defer nodeGuard.unlock();
+                    defer {
+                        nodeGuard.?.unlock();
+                        nodeGuard = null;
+                    }
                     if (nodeToDelete.markedForRemoval()) {
                         return false;
                     }
@@ -213,14 +217,14 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
                 }
 
                 // acquire pred locks from bottom layer up
-                const guards = [1]?*Thread.Mutex{null} ** MAX_HEIGHT;
-                if (!lockNodesForChange(nodeHeight, guards, ?preds, ?succs, false)) {
+                var guards = [1]?*Thread.Mutex{null} ** MAX_HEIGHT;
+                if (!lockNodesForChange(nodeHeight, &guards, &preds, &succs, false)) {
                     continue; // this will unlock all the locks
                 }
 
-                var k: i32 = nodeHeight - 1;
+                var k = nodeHeight - 1;
                 while (k >= 0) : (k -= 1) {
-                    preds[k].setSkip(k, nodeToDelete.skip(k));
+                    preds[k].setSkip(@intCast(k), nodeToDelete.skip(k));
                 }
 
                 incrementSize(-1);
@@ -265,17 +269,17 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
         // pair.second = 1 when the data value is founded, or 0 otherwise.
         // This is like lower_bound, but not exact: we could have the node marked for
         // removal so still need to check that.
-        fn findNode(self: *const Self, data: *const value_type) struct { first: *NodeType, second: i32 } {
+        fn findNode(self: *const Self, data: *const value_type) FindType {
             return findNodeDownRight(self, data);
         }
 
         // Find node by first stepping down then stepping right. Based on benchmark
         // results, this is slightly faster than findNodeRightDown for better
         // locality on the skipping pointers.
-        fn findNodeDownRight(self: *const Self, data: *const value_type) struct { first: *NodeType, second: i32 } {
-            var pred = self.head.load(.acquired);
-            const ht = pred.height();
-            var node: *NodeType = undefined;
+        fn findNodeDownRight(self: *const Self, data: *const value_type) FindType {
+            var pred = self.head.load(.acquire);
+            var ht = pred.height();
+            var node: ?*NodeType = null;
 
             var found = false;
             while (!found) {
@@ -285,19 +289,19 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
                     node = pred.skip(ht - 1);
                 }
                 if (ht == 0) {
-                    return .{ .first = node, .second = 0 }; // not found
+                    return .{ .first = node.?, .second = 0 }; // not found
                 }
                 // node <= data now, but we need to fix up ht
                 ht -= 1;
 
                 // stepping right
                 while (greater(data, node)) {
-                    pred = node;
-                    node = node.skip(ht);
+                    pred = node.?;
+                    node = node.?.skip(ht);
                 }
                 found = !less(data, node);
             }
-            return .{ .first = node, .second = found };
+            return .{ .first = node.?, .second = @intFromBool(found) };
         }
 
         fn lower_bound(self: *const Self, data: *const value_type) *NodeType {
@@ -375,7 +379,7 @@ pub fn Accessor(SkipListType: type) type {
         // returns end() if the value is not in the list, otherwise returns an
         // iterator pointing to the data, and it's guaranteed that the data is valid
         // as far as the Accessor is hold.
-        pub fn find(self: *const Self, value: *const key_type) *NodeType {
+        pub fn find(self: *const Self, value: *const key_type) ?*NodeType {
             return self.sl_.find(value);
         }
 
@@ -448,7 +452,7 @@ pub fn Accessor(SkipListType: type) type {
         // Returns true if the node is added successfully, false if not, i.e. the
         // node with the same key already existed in the list.
         pub fn contains(self: *Self, data: *const key_type) bool {
-            return self.sl_.find(data);
+            return self.sl_.find(data) != null;
         }
         pub fn add(self: *Self, data: *const key_type) bool {
             return self.sl_.addOrGetData(data).second != 0;
