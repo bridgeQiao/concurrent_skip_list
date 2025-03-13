@@ -29,9 +29,10 @@ pub fn main() !void {
     std.debug.print("{*}\n", .{access.first()});
 
     // do test
-    const num_threads = 8;
+    const num_readers = 8;
+    const num_writers = 1;
     for (0..2) |i| {
-        _ = concurrent_test(@intCast(i), num_threads, num_threads);
+        _ = concurrent_test(@intCast(i), num_readers, num_writers);
     }
 }
 
