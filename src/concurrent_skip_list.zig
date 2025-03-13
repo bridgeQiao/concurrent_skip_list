@@ -218,16 +218,21 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
 
                 // acquire pred locks from bottom layer up
                 var guards = [1]?*Thread.Mutex{null} ** MAX_HEIGHT;
+                defer {
+                    for (guards) |lock| {
+                        if (lock != null) lock.?.unlock();
+                    }
+                }
                 if (!lockNodesForChange(nodeHeight, &guards, &preds, &succs, false)) {
                     continue; // this will unlock all the locks
                 }
 
-                var k = nodeHeight - 1;
+                var k: i32 = @as(i32, @intCast(nodeHeight)) - 1;
                 while (k >= 0) : (k -= 1) {
-                    preds[k].setSkip(@intCast(k), nodeToDelete.skip(k));
+                    preds[@intCast(k)].setSkip(@intCast(k), nodeToDelete.skip(@intCast(k)));
                 }
 
-                incrementSize(-1);
+                _ = self.incrementSize(-1);
                 break;
             }
             self.recycle(nodeToDelete);
@@ -284,12 +289,14 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
             var found = false;
             while (!found) {
                 // stepping down
-                node = pred.skip(ht - 1);
-                while (ht > 0 and less(data, node)) : (ht -= 1) {
+                if (ht > 0) {
                     node = pred.skip(ht - 1);
+                    while (ht > 0 and less(data, node)) : (ht -= 1) {
+                        node = pred.skip(ht - 1);
+                    }
                 }
                 if (ht == 0) {
-                    return .{ .first = node.?, .second = 0 }; // not found
+                    return .{ .first = undefined, .second = 0 }; // not found
                 }
                 // node <= data now, but we need to fix up ht
                 ht -= 1;
