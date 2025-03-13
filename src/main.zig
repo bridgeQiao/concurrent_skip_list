@@ -21,13 +21,17 @@ pub fn main() !void {
     defer sl.deinit();
 
     var access = skip_list.Accessor(SkipListType).init(&sl);
+    defer access.deinit();
     _ = access.add(&data);
-    std.debug.print("{*}", .{access.first()});
-    access.deinit();
+    if (access.contains(&data)) {
+        std.debug.print("data: {}\n", .{access.find(&data).?.data().*});
+    }
+    std.debug.print("{*}\n", .{access.first()});
 
     // do test
+    const num_threads = 8;
     for (0..2) |i| {
-        _ = concurrent_test(@intCast(i));
+        _ = concurrent_test(@intCast(i), num_threads, num_threads);
     }
 }
 
@@ -71,15 +75,16 @@ fn reader(args: *ThreadArgs) void {
     var timer = std.time.Timer.start() catch unreachable;
     while (timer.read() < @as(u64, @intCast(args.duration_ms)) * 1_000_000) {
         var rng = std.Random.DefaultPrng.init(@intCast(std.time.milliTimestamp()));
-        const r = @rem(rng.random().int(i32), args.num);
+        const r = rng.random().intRangeAtMost(i32, 0, args.num - 1);
         const max_walks: i32 = 3;
         var walks: i32 = 0;
 
         if (args.mode == .SKIPLIST) {
             var access = skip_list.Accessor(SkipListType).init(args.sl);
             const data_r = NodeType{ .first = r };
-            if (access.contains(&data_r)) {
-                args.temp += num_primes(@intCast(access.find(&data_r).?.data().second), 10000);
+            const find_data = access.find(&data_r);
+            if (find_data != null) {
+                args.temp += num_primes(@intCast(find_data.?.data().second), 10000);
                 walks += 1;
             }
         } else if (args.mode == .MAP_MUTEX) {
@@ -104,7 +109,7 @@ fn writer(args: *ThreadArgs) void {
     var timer = std.time.Timer.start() catch unreachable;
     while (timer.read() < @as(u64, @intCast(args.duration_ms)) * 1_000_000) {
         var rng = std.Random.DefaultPrng.init(@intCast(std.time.milliTimestamp()));
-        var r = @rem(rng.random().int(i32), @divTrunc(args.num, args.modulo));
+        var r = rng.random().intRangeAtMost(i32, 0, @divTrunc(args.num, args.modulo) - 1);
         r *= args.modulo;
         r += args.id;
 
@@ -137,7 +142,8 @@ fn writer(args: *ThreadArgs) void {
 }
 
 // 并发测试函数
-fn concurrent_test(mode: i32) i32 {
+fn concurrent_test(mode: i32, comptime num_readers: i32, comptime num_writers: i32) i32 {
+    std.debug.print("concurrent test: {}\n", .{@as(ThreadArgs.Mode, @enumFromInt(mode))});
     var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
     defer arena.deinit();
     const allocator = arena.allocator();
@@ -151,7 +157,6 @@ fn concurrent_test(mode: i32) i32 {
     const duration_ms: i32 = 5000;
 
     // 创建读者线程
-    const num_readers: i32 = 4;
     var r_args = [_]ThreadArgs{undefined} ** num_readers;
     var readers = [_]std.Thread{undefined} ** num_readers;
     for (0..num_readers) |i| {
@@ -171,7 +176,6 @@ fn concurrent_test(mode: i32) i32 {
     }
 
     // 创建写者线程
-    const num_writers: i32 = 4;
     var w_args = [_]ThreadArgs{undefined} ** num_writers;
     var writers = [_]std.Thread{undefined} ** num_writers;
     for (0..num_writers) |i| {
