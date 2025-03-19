@@ -13,7 +13,7 @@ const NodeType = struct {
         return lhs.first < rhs.first;
     }
 };
-const SkipListType = skip_list.ConcurrentSkipList(NodeType, &NodeType.less, std.heap.page_allocator, 16);
+const SkipListType = skip_list.ConcurrentSkipList(NodeType, &NodeType.less, std.heap.smp_allocator, 16);
 
 pub fn main() !void {
     const data: NodeType = .{ .first = 30, .second = 30 };
@@ -29,8 +29,8 @@ pub fn main() !void {
     std.debug.print("{*}\n", .{access.first()});
 
     // do test
-    const num_readers = 8;
-    const num_writers = 1;
+    const num_readers = 4;
+    const num_writers = 4;
     for (0..2) |i| {
         _ = concurrent_test(@intCast(i), num_readers, num_writers);
     }

@@ -51,37 +51,37 @@ W1 R4:
 
 ```bash
 concurrent test: main.ThreadArgs.Mode.SKIPLIST
-read: 44504008.8 ops/sec
-write: 357190.2 ops/sec
-total: 44861199.0 ops/sec
+read: 59116408.8 ops/sec
+write: 516296.6 ops/sec
+total: 59632705.4 ops/sec
 concurrent test: main.ThreadArgs.Mode.MAP_MUTEX
-read: 1622013.6 ops/sec
-write: 3140.0 ops/sec
-total: 1625153.6 ops/sec
+read: 1550502.0 ops/sec
+write: 2444.8 ops/sec
+total: 1552946.8 ops/sec
 ```
 
 W1 R8:
 
 ```bash
 concurrent test: main.ThreadArgs.Mode.SKIPLIST
-read: 42400553.4 ops/sec
-write: 449721.0 ops/sec
-total: 42850274.4 ops/sec
+read: 52487349.6 ops/sec
+write: 553217.8 ops/sec
+total: 53040567.4 ops/sec
 concurrent test: main.ThreadArgs.Mode.MAP_MUTEX
-read: 6344752.2 ops/sec
-write: 7511.6 ops/sec
-total: 6352263.8 ops/sec
+read: 6319045.2 ops/sec
+write: 8136.4 ops/sec
+total: 6327181.6 ops/sec
 ```
 
 W4 R4:
 
 ```bash
 concurrent test: main.ThreadArgs.Mode.SKIPLIST
-read: 28497686.4 ops/sec
-write: 1700419.0 ops/sec
-total: 30198105.4 ops/sec
+read: 47985684.6 ops/sec
+write: 2717000.4 ops/sec
+total: 50702685.0 ops/sec
 concurrent test: main.ThreadArgs.Mode.MAP_MUTEX
-read: 2238460.2 ops/sec
-write: 316186.6 ops/sec
-total: 2554646.8 ops/sec
+read: 2650765.8 ops/sec
+write: 462557.8 ops/sec
+total: 3113323.6 ops/sec
 ```
