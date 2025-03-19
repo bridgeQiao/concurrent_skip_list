@@ -45,7 +45,7 @@ pub fn main() !void {
 
 ## BenchMark
 
-My computer is `Mac mini m2`, 8G memory. Use `-Doptimize=ReleaseSafe`, read is better, but write is less.
+My computer is `Mac mini m2`, 8G memory. Use `-Doptimize=ReleaseSafe`.
 
 W1 R4:
 
