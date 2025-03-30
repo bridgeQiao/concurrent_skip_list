@@ -47,7 +47,7 @@ const ThreadArgs = struct {
     temp: u64,
     sl: *SkipListType,
     stdmap: *std.hash_map.AutoHashMap(i32, i32),
-    lock: *std.Thread.Mutex,
+    lock: *std.Thread.RwLock,
 
     // 模式枚举
     const Mode = enum {
@@ -89,8 +89,8 @@ fn reader(args: *ThreadArgs) void {
                 walks += 1;
             }
         } else if (args.mode == .MAP_MUTEX) {
-            args.lock.lock();
-            defer args.lock.unlock();
+            args.lock.lockShared();
+            defer args.lock.unlockShared();
             if (args.stdmap.get(r)) |value| {
                 args.temp += num_primes(@intCast(value), 10000);
                 walks += 1;
@@ -152,7 +152,7 @@ fn concurrent_test(mode: i32, comptime num_readers: i32, comptime num_writers: i
     // 初始化数据结构
     var sl = SkipListType.init();
     var stdmap = std.hash_map.AutoHashMap(i32, i32).init(allocator);
-    var lock = std.Thread.Mutex{};
+    var lock = std.Thread.RwLock{};
 
     const num: i32 = 10_000_000;
     const duration_ms: i32 = 5000;
