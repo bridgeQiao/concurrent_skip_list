@@ -2,7 +2,7 @@
 //! you are building an executable. If you are making a library, the convention
 //! is to delete this file and start with root.zig instead.
 const std = @import("std");
-const skip_list = @import("concurrent_skip_list.zig");
+const skip_list = @import("concurrent_skip_list");
 
 const NodeType = struct {
     const Self = @This();

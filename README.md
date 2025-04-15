@@ -5,14 +5,32 @@ BenchMark origin: [greensky00/skiplist](https://github.com/greensky00/skiplist.g
 
 ## use it
 
-### 1. copy file
+### 1. add the repo
 
-copy `src/concurrent_skip_list.zig` and `src/concurrent_skip_list_inc.zig` to your project.
+execute:
+
+```bash
+zig fetch --save git+https://github.com/bridgeQiao/concurrent_skip_list.git
+```
+
+In `build.zig` add import:
+
+```zig
+const con_skiplist_dep = b.dependency("concurrent_skip_list", .{
+    .target = target,
+    .optimize = optimize,
+});
+
+const con_skiplist = con_skiplist_dep.module("concurrent_skip_list");
+
+// ...
+exe.root_module.addImport("concurrent_skip_list", lib_mod);
+```
 
 ### 2. import
 
 ```zig
-const skip_list = @import("concurrent_skip_list.zig");
+const skip_list = @import("concurrent_skip_list");
 
 // define data type
 const NodeType = struct {
