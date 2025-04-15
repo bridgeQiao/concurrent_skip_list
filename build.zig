@@ -16,7 +16,7 @@ pub fn build(b: *std.Build) void {
     const optimize = b.standardOptimizeOption(.{});
 
     // lib mode
-    const lib_mod = b.createModule(.{
+    const lib_mod = b.addModule("concurrent_skip_list", .{
         .root_source_file = b.path("src/concurrent_skip_list.zig"),
         .target = target,
         .optimize = optimize,
