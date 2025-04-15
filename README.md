@@ -20,11 +20,10 @@ const con_skiplist_dep = b.dependency("concurrent_skip_list", .{
     .target = target,
     .optimize = optimize,
 });
-
 const con_skiplist = con_skiplist_dep.module("concurrent_skip_list");
 
 // ...
-exe.root_module.addImport("concurrent_skip_list", lib_mod);
+exe.root_module.addImport("concurrent_skip_list", con_skiplist);
 ```
 
 ### 2. import
