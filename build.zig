@@ -15,13 +15,26 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
+    // lib mode
+    const lib_mod = b.createModule(.{
+        .root_source_file = b.path("src/concurrent_skip_list.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const lib = b.addLibrary(.{
+        .name = "concurrent_skip_list",
+        .linkage = .static,
+        .root_module = lib_mod,
+    });
+
     // We will also create a module for our other entry point, 'main.zig'.
     const exe_mod = b.createModule(.{
         // `root_source_file` is the Zig "entry point" of the module. If a module
         // only contains e.g. external object files, you can make this `null`.
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
-        .root_source_file = b.path("src/main.zig"),
+        .root_source_file = b.path("examples/benchmark.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -29,13 +42,15 @@ pub fn build(b: *std.Build) void {
     // This creates another `std.Build.Step.Compile`, but this one builds an executable
     // rather than a static library.
     const exe = b.addExecutable(.{
-        .name = "concurrent_skip_list",
+        .name = "benchmark",
         .root_module = exe_mod,
     });
+    exe.root_module.addImport("concurrent_skip_list", lib_mod);
 
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).
+    b.installArtifact(lib);
     b.installArtifact(exe);
 
     // This *creates* a Run step in the build graph, to be executed when another
