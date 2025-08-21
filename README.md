@@ -1,6 +1,7 @@
 # concurrent_skip_list
 
-Copy from folly project:) Rewrite the code to zig.
+Folly-inspired, Zig-powered.
+
 BenchMark origin: [greensky00/skiplist](https://github.com/greensky00/skiplist.git). Thanks!
 
 ## use it
