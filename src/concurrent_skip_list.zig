@@ -455,7 +455,6 @@ pub fn Accessor(SkipListType: type) type {
         }
 
         // legacy interfaces
-        // TODO:(xliu) remove these.
         // Returns true if the node is added successfully, false if not, i.e. the
         // node with the same key already existed in the list.
         pub fn contains(self: *Self, data: *const key_type) bool {

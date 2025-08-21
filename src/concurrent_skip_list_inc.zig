@@ -263,8 +263,7 @@ pub fn NodeRecycler(NodeType: type, NodeAlloc: std.mem.Allocator) type {
                     self.dirty.store(false, .release);
                 }
             }
-            // TODO(xliu) should we spawn a thread to do this when there are large
-            // number of nodes in the recycler?
+
             if (newNodes != null) {
                 for (newNodes.?.items) |node| {
                     node.destroy();
