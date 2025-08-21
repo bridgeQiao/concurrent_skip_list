@@ -13,7 +13,9 @@ const NodeType = struct {
         return lhs.first < rhs.first;
     }
 };
-const SkipListType = skip_list.ConcurrentSkipList(NodeType, &NodeType.less, std.heap.smp_allocator, 16);
+
+var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
+const SkipListType = skip_list.ConcurrentSkipList(NodeType, &NodeType.less, debug_allocator.allocator(), 16);
 
 pub fn main() !void {
     const data: NodeType = .{ .first = 30, .second = 30 };

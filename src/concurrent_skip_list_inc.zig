@@ -1,6 +1,7 @@
 const std = @import("std");
 const atomic = std.atomic;
 const Thread = std.Thread;
+const ArrayList = std.array_list.Managed;
 
 pub fn SkipListNode(ValueType: type, allocator: std.mem.Allocator) type {
     const Flag = struct {
@@ -16,7 +17,7 @@ pub fn SkipListNode(ValueType: type, allocator: std.mem.Allocator) type {
         height_: u8,
         spinLock_: Thread.Mutex,
         data_: ValueType = undefined,
-        skip_: std.ArrayList(atomic.Value(?*Self)) = undefined,
+        skip_: ArrayList(atomic.Value(?*Self)) = undefined,
 
         pub fn create(node_height: usize, value_data: ?*const ValueType, option: ?struct { isHead: bool = false }) *Self {
             var flag: atomic.Value(u16) = undefined;
@@ -35,7 +36,7 @@ pub fn SkipListNode(ValueType: type, allocator: std.mem.Allocator) type {
                 .spinLock_ = Thread.Mutex{},
             };
             if (value_data != null) ret.data_ = value_data.?.*;
-            ret.skip_ = std.ArrayList(atomic.Value(?*Self)).init(allocator);
+            ret.skip_ = ArrayList(atomic.Value(?*Self)).init(allocator);
             ret.skip_.appendNTimes(atomic.Value(?*Self){ .raw = null }, node_height) catch unreachable;
             return ret;
         }
@@ -158,7 +159,7 @@ pub const SkipListRandomHeight = struct {
         const kProb: f64 = 1.0 / kProbInv;
         const kMaxSizeLimit: isize = std.math.maxInt(isize);
 
-        var sizeLimit: f64 = 1;
+        var sizeLimit: f128 = 1;
         var p = (1 - kProb);
         self.lookupTable_[0] = p;
         self.sizeLimitTable_[0] = 1;
@@ -168,7 +169,7 @@ pub const SkipListRandomHeight = struct {
             p *= kProb;
             sizeLimit *= kProbInv;
             self.lookupTable_[i] = self.lookupTable_[i - 1] + p;
-            self.sizeLimitTable_[i] = if (sizeLimit > std.math.maxInt(isize)) std.math.maxInt(isize) else @intFromFloat(sizeLimit);
+            self.sizeLimitTable_[i] = if (sizeLimit > std.math.maxInt(isize)) std.math.maxInt(isize) else @as(isize, @intFromFloat(sizeLimit));
         }
         self.lookupTable_[kMaxHeight - 1] = 1;
         self.sizeLimitTable_[kMaxHeight - 1] = kMaxSizeLimit;
@@ -201,16 +202,16 @@ pub const SkipListRandomHeight = struct {
 pub fn NodeRecycler(NodeType: type, NodeAlloc: std.mem.Allocator) type {
     return struct {
         const Self = @This();
-        nodes: *std.ArrayList(*NodeType),
+        nodes: *ArrayList(*NodeType),
         refs_: atomic.Value(i32) = atomic.Value(i32){ .raw = 0 }, // current number of visitors to the list
         dirty: atomic.Value(bool) = atomic.Value(bool){ .raw = false }, // whether *nodes_ is non-empty
         lock: Thread.Mutex = Thread.Mutex{}, // protects access to *nodes_
 
         pub fn init() Self {
             const ret = Self{
-                .nodes = NodeAlloc.create(std.ArrayList(*NodeType)) catch unreachable,
+                .nodes = NodeAlloc.create(ArrayList(*NodeType)) catch unreachable,
             };
-            ret.nodes.* = std.ArrayList(*NodeType).init(NodeAlloc);
+            ret.nodes.* = ArrayList(*NodeType).init(NodeAlloc);
             return ret;
         }
 
@@ -240,7 +241,7 @@ pub fn NodeRecycler(NodeType: type, NodeAlloc: std.mem.Allocator) type {
                 return self.refs_.fetchAdd(-1, .acq_rel);
             }
 
-            var newNodes: ?*std.ArrayList(*NodeType) = null;
+            var newNodes: ?*ArrayList(*NodeType) = null;
             var ret: i32 = 0;
             {
                 // The order at which we lock, add, swap, is very important for
@@ -254,8 +255,8 @@ pub fn NodeRecycler(NodeType: type, NodeAlloc: std.mem.Allocator) type {
                     // current nodes in the recycler, as we already acquired the lock here
                     // so no more new nodes can be added, even though new accessors may be
                     // added after this.
-                    newNodes = NodeAlloc.create(std.ArrayList(*NodeType)) catch unreachable;
-                    newNodes.?.* = std.ArrayList(*NodeType).init(NodeAlloc);
+                    newNodes = NodeAlloc.create(ArrayList(*NodeType)) catch unreachable;
+                    newNodes.?.* = ArrayList(*NodeType).init(NodeAlloc);
                     const temp = self.nodes;
                     self.nodes = newNodes.?;
                     newNodes = temp;
