@@ -6,9 +6,9 @@ const ArrayList = std.ArrayList;
 pub fn SkipListNode(ValueType: type, allocator: std.mem.Allocator) type {
     const Flag = struct {
         pub const Init: u16 = 0;
-        pub const IsHeadNode: u16 = 1 << 0; // 二进制 0000_0001 (1)
-        pub const MarkedForRemoval: u16 = 1 << 1; // 二进制 0000_0010 (2)
-        pub const FullyLinked: u16 = 1 << 2; // 二进制 0000_0100 (4)
+        pub const IsHeadNode: u16 = 1 << 0; // binary: 0000_0001 (1)
+        pub const MarkedForRemoval: u16 = 1 << 1; // binary: 0000_0010 (2)
+        pub const FullyLinked: u16 = 1 << 2; // binary: 0000_0100 (4)
     };
     return struct {
         const Self = @This();
