@@ -1,7 +1,7 @@
 const std = @import("std");
 const atomic = std.atomic;
 const Thread = std.Thread;
-const ArrayList = std.array_list.Managed;
+const ArrayList = std.ArrayList;
 
 pub fn SkipListNode(ValueType: type, allocator: std.mem.Allocator) type {
     const Flag = struct {
@@ -17,7 +17,7 @@ pub fn SkipListNode(ValueType: type, allocator: std.mem.Allocator) type {
         height_: u8,
         spinLock_: Thread.Mutex,
         data_: ValueType = undefined,
-        skip_: ArrayList(atomic.Value(?*Self)) = undefined,
+        skip_: ArrayList(atomic.Value(?*Self)) = .empty,
 
         pub fn create(node_height: usize, value_data: ?*const ValueType, option: ?struct { isHead: bool = false }) *Self {
             var flag: atomic.Value(u16) = undefined;
@@ -36,13 +36,12 @@ pub fn SkipListNode(ValueType: type, allocator: std.mem.Allocator) type {
                 .spinLock_ = Thread.Mutex{},
             };
             if (value_data != null) ret.data_ = value_data.?.*;
-            ret.skip_ = ArrayList(atomic.Value(?*Self)).init(allocator);
-            ret.skip_.appendNTimes(atomic.Value(?*Self){ .raw = null }, node_height) catch unreachable;
+            ret.skip_.appendNTimes(allocator, atomic.Value(?*Self){ .raw = null }, node_height) catch unreachable;
             return ret;
         }
 
         pub fn destroy(self: *Self) void {
-            self.skip_.deinit();
+            self.skip_.deinit(allocator);
             allocator.destroy(self);
         }
 
@@ -211,7 +210,7 @@ pub fn NodeRecycler(NodeType: type, NodeAlloc: std.mem.Allocator) type {
             const ret = Self{
                 .nodes = NodeAlloc.create(ArrayList(*NodeType)) catch unreachable,
             };
-            ret.nodes.* = ArrayList(*NodeType).init(NodeAlloc);
+            ret.nodes.* = .empty;
             return ret;
         }
 
@@ -224,7 +223,7 @@ pub fn NodeRecycler(NodeType: type, NodeAlloc: std.mem.Allocator) type {
             self.lock.lock();
             defer self.lock.unlock();
 
-            self.nodes.append(node) catch unreachable;
+            self.nodes.append(NodeAlloc, node) catch unreachable;
             self.dirty.store(true, .release);
         }
 
@@ -256,7 +255,7 @@ pub fn NodeRecycler(NodeType: type, NodeAlloc: std.mem.Allocator) type {
                     // so no more new nodes can be added, even though new accessors may be
                     // added after this.
                     newNodes = NodeAlloc.create(ArrayList(*NodeType)) catch unreachable;
-                    newNodes.?.* = ArrayList(*NodeType).init(NodeAlloc);
+                    newNodes.?.* = .empty;
                     const temp = self.nodes;
                     self.nodes = newNodes.?;
                     newNodes = temp;
