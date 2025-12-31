@@ -77,7 +77,7 @@ fn num_primes(number: u64, max_prime: usize) usize {
 fn reader(args: *ThreadArgs) void {
     var timer = std.time.Timer.start() catch unreachable;
     while (timer.read() < @as(u64, @intCast(args.duration_ms)) * 1_000_000) {
-        var rng = std.Random.DefaultPrng.init(@intCast(std.time.milliTimestamp()));
+        var rng = std.Random.DefaultPrng.init(@intCast(std.crypto.random.int(u64)));
         const r = rng.random().intRangeAtMost(i32, 0, args.num - 1);
         const max_walks: i32 = 3;
         var walks: i32 = 0;
@@ -111,7 +111,7 @@ fn reader(args: *ThreadArgs) void {
 fn writer(args: *ThreadArgs) void {
     var timer = std.time.Timer.start() catch unreachable;
     while (timer.read() < @as(u64, @intCast(args.duration_ms)) * 1_000_000) {
-        var rng = std.Random.DefaultPrng.init(@intCast(std.time.milliTimestamp()));
+        var rng = std.Random.DefaultPrng.init(@intCast(std.crypto.random.int(u64)));
         var r = rng.random().intRangeAtMost(i32, 0, @divTrunc(args.num, args.modulo) - 1);
         r *= args.modulo;
         r += args.id;
