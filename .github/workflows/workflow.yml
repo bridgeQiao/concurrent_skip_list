@@ -16,9 +16,13 @@ jobs:
           version: master
       - name: Check formatting
         run: zig fmt --check .
-      - name: Build
-        run: zig build
       - name: Run tests
         run: zig build test
+      - name: Check mutex and leaks
+        run: |
+          zig build
+          ./zig-out/bin/benchmark
       - name: Run benchmark
-        run: ./zig-out/bin/benchmark
+        run: |
+          zig build -Doptimize=ReleaseSafe
+          ./zig-out/bin/benchmark
