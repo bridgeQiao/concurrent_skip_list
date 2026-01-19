@@ -15,7 +15,6 @@ const NodeType = struct {
     }
 };
 
-var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
 const SkipListType = skip_list.ConcurrentSkipList(NodeType, &NodeType.less, 16);
 
 pub fn main(init: std.process.Init) !void {

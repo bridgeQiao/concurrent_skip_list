@@ -42,16 +42,16 @@ const NodeType = struct {
         return lhs.first < rhs.first;
     }
 };
-const SkipListType = skip_list.ConcurrentSkipList(NodeType, &NodeType.less, std.heap.smp_allocator, 16);
+const SkipListType = skip_list.ConcurrentSkipList(NodeType, &NodeType.less, 16);
 
 // main
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
     const data: NodeType = .{ .first = 30, .second = 30 };
-    var sl = SkipListType.init();
+    var sl = SkipListType.init(gpa);
     defer sl.deinit();
 
-    // for multithread safety, use Accessor to add or remove
-    var access = skip_list.Accessor(SkipListType).init(&sl);
+    var access = SkipListType.Accessor.init(&sl);
     defer access.deinit();
     _ = access.add(&data);
     if (access.contains(&data)) {
