@@ -20,3 +20,5 @@ jobs:
         run: zig build
       - name: Run tests
         run: zig build test
+      - name: Run benchmark
+        run: ./zig-out/bin/benchmark
