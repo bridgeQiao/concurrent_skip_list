@@ -5,22 +5,25 @@ const Thread = std.Thread;
 
 const skip_list_inc = @import("concurrent_skip_list_inc.zig");
 
-pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T) bool, NodeAlloc: mem.Allocator, comptime MAX_HEIGHT: i32) type {
+pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T) bool, comptime MAX_HEIGHT: i32) type {
     return struct {
         const Self = @This();
-        const NodeType = skip_list_inc.SkipListNode(T, NodeAlloc);
+        const NodeType = skip_list_inc.SkipListNode(T);
         const value_type = T;
         const key_type = T;
         const FindType = struct { first: *NodeType, second: i32 };
+        pub const Accessor = SLAccessor(Self);
 
-        recycler: skip_list_inc.NodeRecycler(NodeType, NodeAlloc),
+        recycler: skip_list_inc.NodeRecycler(NodeType),
+        allocator: mem.Allocator,
         head: atomic.Value(*NodeType) = undefined,
         size: atomic.Value(isize) = undefined,
 
-        pub fn init() Self {
+        pub fn init(gpa: mem.Allocator) Self {
             return Self{
-                .recycler = skip_list_inc.NodeRecycler(NodeType, NodeAlloc).init(),
-                .head = atomic.Value(*NodeType){ .raw = NodeType.create(MAX_HEIGHT, null, .{ .isHead = true }) },
+                .recycler = skip_list_inc.NodeRecycler(NodeType).init(gpa),
+                .allocator = gpa,
+                .head = atomic.Value(*NodeType){ .raw = NodeType.create(gpa, MAX_HEIGHT, null, .{ .isHead = true }) },
                 .size = atomic.Value(isize){ .raw = 0 },
             };
         }
@@ -32,6 +35,7 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
                 current.?.destroy();
                 current = tmp;
             }
+            self.recycler.deinit();
         }
 
         pub fn getSize(self: *Self) isize {
@@ -159,7 +163,7 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
                 }
 
                 // locks acquired and all valid, need to modify the links under the locks.
-                newNode = NodeType.create(@intCast(nodeHeight), data, null);
+                newNode = NodeType.create(self.allocator, @intCast(nodeHeight), data, null);
                 for (0..@intCast(nodeHeight)) |k| {
                     newNode.setSkip(@intCast(k), succs[k]);
                     preds[k].setSkip(@intCast(k), newNode);
@@ -326,7 +330,7 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
             }
 
             var newHead =
-                NodeType.create(@intCast(node_height), undefined, .{ .isHead = true });
+                NodeType.create(self.allocator, @intCast(node_height), undefined, .{ .isHead = true });
 
             { // need to guard the head node in case others are adding/removing
                 // nodes linked to the head.
@@ -351,7 +355,7 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
     };
 }
 
-pub fn Accessor(SkipListType: type) type {
+pub fn SLAccessor(SkipListType: type) type {
     return struct {
         const Self = @This();
         const size_type = isize;

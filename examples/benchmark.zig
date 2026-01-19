@@ -2,6 +2,7 @@
 //! you are building an executable. If you are making a library, the convention
 //! is to delete this file and start with root.zig instead.
 const std = @import("std");
+const mem = std.mem;
 const skip_list = @import("concurrent_skip_list");
 
 const NodeType = struct {
@@ -15,14 +16,15 @@ const NodeType = struct {
 };
 
 var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
-const SkipListType = skip_list.ConcurrentSkipList(NodeType, &NodeType.less, debug_allocator.allocator(), 16);
+const SkipListType = skip_list.ConcurrentSkipList(NodeType, &NodeType.less, 16);
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
     const data: NodeType = .{ .first = 30, .second = 30 };
-    var sl = SkipListType.init();
+    var sl = SkipListType.init(gpa);
     defer sl.deinit();
 
-    var access = skip_list.Accessor(SkipListType).init(&sl);
+    var access = SkipListType.Accessor.init(&sl);
     defer access.deinit();
     _ = access.add(&data);
     if (access.contains(&data)) {
@@ -34,12 +36,13 @@ pub fn main() !void {
     const num_readers = 4;
     const num_writers = 4;
     for (0..2) |i| {
-        _ = concurrent_test(@intCast(i), num_readers, num_writers);
+        _ = concurrent_test(gpa, init.io, @intCast(i), num_readers, num_writers);
     }
 }
 
 // 定义线程参数结构体
 const ThreadArgs = struct {
+    io: std.Io,
     mode: Mode,
     num: i32,
     id: i32,
@@ -76,14 +79,17 @@ fn num_primes(number: u64, max_prime: usize) usize {
 // 读者线程函数
 fn reader(args: *ThreadArgs) void {
     var timer = std.time.Timer.start() catch unreachable;
+    var seed: u64 = undefined;
+    args.io.random(std.mem.asBytes(&seed));
+    var rng = std.Random.DefaultPrng.init(seed);
     while (timer.read() < @as(u64, @intCast(args.duration_ms)) * 1_000_000) {
-        var rng = std.Random.DefaultPrng.init(@intCast(std.crypto.random.int(u64)));
         const r = rng.random().intRangeAtMost(i32, 0, args.num - 1);
         const max_walks: i32 = 3;
         var walks: i32 = 0;
 
         if (args.mode == .SKIPLIST) {
-            var access = skip_list.Accessor(SkipListType).init(args.sl);
+            var access = SkipListType.Accessor.init(args.sl);
+            defer access.deinit();
             const data_r = NodeType{ .first = r };
             const find_data = access.find(&data_r);
             if (find_data != null) {
@@ -110,14 +116,17 @@ fn reader(args: *ThreadArgs) void {
 // 写者线程函数
 fn writer(args: *ThreadArgs) void {
     var timer = std.time.Timer.start() catch unreachable;
+    var seed: u64 = undefined;
+    args.io.random(std.mem.asBytes(&seed));
+    var rng = std.Random.DefaultPrng.init(seed);
     while (timer.read() < @as(u64, @intCast(args.duration_ms)) * 1_000_000) {
-        var rng = std.Random.DefaultPrng.init(@intCast(std.crypto.random.int(u64)));
         var r = rng.random().intRangeAtMost(i32, 0, @divTrunc(args.num, args.modulo) - 1);
         r *= args.modulo;
         r += args.id;
 
         if (args.mode == .SKIPLIST) {
-            var access = skip_list.Accessor(SkipListType).init(args.sl);
+            var access = SkipListType.Accessor.init(args.sl);
+            defer access.deinit();
             const data_r = NodeType{ .first = r };
             if (access.contains(&data_r)) {
                 _ = access.remove(&data_r);
@@ -145,15 +154,14 @@ fn writer(args: *ThreadArgs) void {
 }
 
 // 并发测试函数
-fn concurrent_test(mode: i32, comptime num_readers: i32, comptime num_writers: i32) i32 {
+fn concurrent_test(allocator: mem.Allocator, io: std.Io, mode: i32, comptime num_readers: i32, comptime num_writers: i32) i32 {
     std.debug.print("concurrent test: {}\n", .{@as(ThreadArgs.Mode, @enumFromInt(mode))});
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    defer arena.deinit();
-    const allocator = arena.allocator();
 
     // 初始化数据结构
-    var sl = SkipListType.init();
+    var sl = SkipListType.init(allocator);
+    defer sl.deinit();
     var stdmap = std.hash_map.AutoHashMap(i32, i32).init(allocator);
+    defer stdmap.deinit();
     var lock = std.Thread.RwLock{};
 
     const num: i32 = 10_000_000;
@@ -161,9 +169,11 @@ fn concurrent_test(mode: i32, comptime num_readers: i32, comptime num_writers: i
 
     // 创建读者线程
     var r_args = [_]ThreadArgs{undefined} ** num_readers;
-    var readers = [_]std.Thread{undefined} ** num_readers;
+    var readers: std.ArrayList(std.Io.Future(void)) = .empty;
+    defer readers.deinit(allocator);
     for (0..num_readers) |i| {
         r_args[i] = ThreadArgs{
+            .io = io,
             .mode = @enumFromInt(mode),
             .num = num,
             .id = 0,
@@ -175,14 +185,17 @@ fn concurrent_test(mode: i32, comptime num_readers: i32, comptime num_writers: i
             .stdmap = &stdmap,
             .lock = &lock,
         };
-        readers[i] = std.Thread.spawn(.{}, reader, .{&r_args[i]}) catch unreachable;
+        readers.append(allocator, io.concurrent(reader, .{&r_args[i]}) catch unreachable) catch unreachable;
     }
 
     // 创建写者线程
     var w_args = [_]ThreadArgs{undefined} ** num_writers;
-    var writers = [_]std.Thread{undefined} ** num_writers;
+    // var writers = [_]std.Io.Future(void){} ** num_writers;
+    var writers: std.ArrayList(std.Io.Future(void)) = .empty;
+    defer writers.deinit(allocator);
     for (0..num_writers) |i| {
         w_args[i] = ThreadArgs{
+            .io = io,
             .mode = @enumFromInt(mode),
             .num = num,
             .id = @intCast(i),
@@ -194,18 +207,18 @@ fn concurrent_test(mode: i32, comptime num_readers: i32, comptime num_writers: i
             .stdmap = &stdmap,
             .lock = &lock,
         };
-        writers[i] = std.Thread.spawn(.{}, writer, .{&w_args[i]}) catch unreachable;
+        writers.append(allocator, io.concurrent(writer, .{&w_args[i]}) catch unreachable) catch unreachable;
     }
 
     // 等待线程结束并统计操作数
     var r_total: i32 = 0;
     var w_total: i32 = 0;
     for (0..num_readers) |i| {
-        readers[i].join();
+        readers.items[i].await(io);
         r_total += r_args[i].op_count;
     }
     for (0..num_writers) |i| {
-        writers[i].join();
+        writers.items[i].await(io);
         w_total += w_args[i].op_count;
     }
 

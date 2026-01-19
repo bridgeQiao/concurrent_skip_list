@@ -2,8 +2,9 @@ const std = @import("std");
 const atomic = std.atomic;
 const Thread = std.Thread;
 const ArrayList = std.ArrayList;
+const mem = std.mem;
 
-pub fn SkipListNode(ValueType: type, allocator: std.mem.Allocator) type {
+pub fn SkipListNode(ValueType: type) type {
     const Flag = struct {
         pub const Init: u16 = 0;
         pub const IsHeadNode: u16 = 1 << 0; // binary: 0000_0001 (1)
@@ -16,10 +17,11 @@ pub fn SkipListNode(ValueType: type, allocator: std.mem.Allocator) type {
         flags_: atomic.Value(u16),
         height_: u8,
         spinLock_: Thread.Mutex,
+        allocator_: mem.Allocator,
         data_: ValueType = undefined,
         skip_: ArrayList(atomic.Value(?*Self)) = .empty,
 
-        pub fn create(node_height: usize, value_data: ?*const ValueType, option: ?struct { isHead: bool = false }) *Self {
+        pub fn create(allocator: mem.Allocator, node_height: usize, value_data: ?*const ValueType, option: ?struct { isHead: bool = false }) *Self {
             var flag: atomic.Value(u16) = undefined;
             flag.store(Flag.Init, .release);
             if (option) |opt| {
@@ -33,6 +35,7 @@ pub fn SkipListNode(ValueType: type, allocator: std.mem.Allocator) type {
             ret.* = Self{
                 .flags_ = flag,
                 .height_ = @intCast(node_height),
+                .allocator_ = allocator,
                 .spinLock_ = Thread.Mutex{},
             };
             if (value_data != null) ret.data_ = value_data.?.*;
@@ -41,8 +44,8 @@ pub fn SkipListNode(ValueType: type, allocator: std.mem.Allocator) type {
         }
 
         pub fn destroy(self: *Self) void {
-            self.skip_.deinit(allocator);
-            allocator.destroy(self);
+            self.skip_.deinit(self.allocator_);
+            self.allocator_.destroy(self);
         }
 
         pub fn copyHead(self: *Self, node: *Self) *Self {
@@ -116,29 +119,29 @@ pub const SkipListRandomHeight = struct {
     const Self = @This();
     const kMaxHeight = 64;
 
+    // instance related
+    var call_once = std.once(init);
+    var instance_: Self = undefined;
+
     lookupTable_: [kMaxHeight]f64,
     sizeLimitTable_: [kMaxHeight]isize,
+    prng: std.Random.DefaultPrng,
+
+    fn init() void {
+        instance_.initLookupTable();
+
+        // init random
+        instance_.prng = std.Random.DefaultPrng.init(0);
+    }
 
     pub fn instance() *Self {
-        const Instance = struct {
-            var b_init = atomic.Value(bool){ .raw = false };
-            var lock: Thread.Mutex = Thread.Mutex{};
-            var random_height: Self = Self{ .lookupTable_ = undefined, .sizeLimitTable_ = undefined };
-        };
-        if (!Instance.b_init.load(.acquire)) {
-            Instance.lock.lock();
-            defer Instance.lock.unlock();
-            if (!Instance.b_init.load(.acquire)) {
-                Instance.random_height.initLookupTable();
-                Instance.b_init.store(true, .release);
-            }
-        }
-        return &Instance.random_height;
+        call_once.call();
+        return &instance_;
     }
 
     pub fn getHeight(self: *Self, maxHeight: usize) usize {
         std.debug.assert(maxHeight <= kMaxHeight);
-        const p = randomProb();
+        const p = self.prng.random().float(f64);
         for (0..@intCast(maxHeight)) |i| {
             if (p < self.lookupTable_[i]) {
                 return @intCast(i + 1);
@@ -173,57 +176,35 @@ pub const SkipListRandomHeight = struct {
         self.lookupTable_[kMaxHeight - 1] = 1;
         self.sizeLimitTable_[kMaxHeight - 1] = kMaxSizeLimit;
     }
-
-    fn randomProb() f64 {
-        const rng = struct {
-            var b_init = atomic.Value(bool){ .raw = false };
-            var lock: Thread.Mutex = Thread.Mutex{};
-            var prng: std.Random.Xoshiro256 = undefined;
-            var rand: std.Random = undefined;
-        };
-        if (rng.b_init.load(.acquire) == false) {
-            rng.lock.lock();
-            defer rng.lock.unlock();
-            if (rng.b_init.load(.acquire) == false) {
-                rng.prng = std.Random.DefaultPrng.init(blk: {
-                    var seed: u64 = undefined;
-                    std.posix.getrandom(std.mem.asBytes(&seed)) catch unreachable;
-                    break :blk seed;
-                });
-                rng.rand = rng.prng.random();
-                rng.b_init.store(true, .release);
-            }
-        }
-        return rng.rand.float(f64);
-    }
 };
 
-pub fn NodeRecycler(NodeType: type, NodeAlloc: std.mem.Allocator) type {
+pub fn NodeRecycler(NodeType: type) type {
     return struct {
         const Self = @This();
-        nodes: *ArrayList(*NodeType),
+        allocator_: mem.Allocator,
+        nodes: ArrayList(*NodeType) = .empty,
         refs_: atomic.Value(i32) = atomic.Value(i32){ .raw = 0 }, // current number of visitors to the list
         dirty: atomic.Value(bool) = atomic.Value(bool){ .raw = false }, // whether *nodes_ is non-empty
         lock: Thread.Mutex = Thread.Mutex{}, // protects access to *nodes_
 
-        pub fn init() Self {
-            const ret = Self{
-                .nodes = NodeAlloc.create(ArrayList(*NodeType)) catch unreachable,
+        pub fn init(allocator: mem.Allocator) Self {
+            return Self{
+                .allocator_ = allocator,
             };
-            ret.nodes.* = .empty;
-            return ret;
         }
 
         pub fn deinit(self: *Self) void {
-            self.nodes.deinit();
-            NodeAlloc.destroy(self.nodes);
+            for (self.nodes.items) |node| {
+                node.destroy();
+            }
+            self.nodes.deinit(self.allocator_);
         }
 
         pub fn add(self: *Self, node: *NodeType) void {
             self.lock.lock();
             defer self.lock.unlock();
 
-            self.nodes.append(NodeAlloc, node) catch unreachable;
+            self.nodes.append(self.allocator_, node) catch unreachable;
             self.dirty.store(true, .release);
         }
 
@@ -240,7 +221,8 @@ pub fn NodeRecycler(NodeType: type, NodeAlloc: std.mem.Allocator) type {
                 return self.refs_.fetchAdd(-1, .acq_rel);
             }
 
-            var newNodes: ?*ArrayList(*NodeType) = null;
+            var newNodes: ArrayList(*NodeType) = .empty;
+            defer newNodes.deinit(self.allocator_);
             var ret: i32 = 0;
             {
                 // The order at which we lock, add, swap, is very important for
@@ -254,17 +236,14 @@ pub fn NodeRecycler(NodeType: type, NodeAlloc: std.mem.Allocator) type {
                     // current nodes in the recycler, as we already acquired the lock here
                     // so no more new nodes can be added, even though new accessors may be
                     // added after this.
-                    newNodes = NodeAlloc.create(ArrayList(*NodeType)) catch unreachable;
-                    newNodes.?.* = .empty;
-                    const temp = self.nodes;
-                    self.nodes = newNodes.?;
-                    newNodes = temp;
+                    newNodes = self.nodes;
+                    self.nodes = .empty;
                     self.dirty.store(false, .release);
                 }
             }
 
-            if (newNodes != null) {
-                for (newNodes.?.items) |node| {
+            if (newNodes.items.len > 0) {
+                for (newNodes.items) |node| {
                     node.destroy();
                 }
             }
@@ -278,9 +257,9 @@ pub fn NodeRecycler(NodeType: type, NodeAlloc: std.mem.Allocator) type {
 }
 
 test "skip list node" {
-    const NodeType = SkipListNode(i32, std.testing.allocator);
+    const NodeType = SkipListNode(i32);
     const data: i32 = 64;
-    const node = NodeType.create(32, &data, null);
+    const node = NodeType.create(std.testing.allocator, 32, &data, null);
     defer node.destroy();
     std.debug.print("{}", .{node.data_});
 }
