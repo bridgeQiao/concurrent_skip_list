@@ -8,7 +8,7 @@ const skip_list_inc = @import("concurrent_skip_list_inc.zig");
 pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T) bool, comptime MAX_HEIGHT: i32) type {
     return struct {
         const Self = @This();
-        const NodeType = skip_list_inc.SkipListNode(T);
+        const NodeType = skip_list_inc.SkipListNode(T, MAX_HEIGHT);
         const value_type = T;
         const key_type = T;
         const FindType = struct { first: *NodeType, second: i32 };

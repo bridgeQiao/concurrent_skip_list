@@ -4,7 +4,7 @@ const Thread = std.Thread;
 const ArrayList = std.ArrayList;
 const mem = std.mem;
 
-pub fn SkipListNode(ValueType: type) type {
+pub fn SkipListNode(ValueType: type, MAX_HEIGHT: i32) type {
     const Flag = struct {
         pub const Init: u16 = 0;
         pub const IsHeadNode: u16 = 1 << 0; // binary: 0000_0001 (1)
@@ -19,7 +19,7 @@ pub fn SkipListNode(ValueType: type) type {
         spinLock_: Thread.Mutex,
         allocator_: mem.Allocator,
         data_: ValueType = undefined,
-        skip_: ArrayList(atomic.Value(?*Self)) = .empty,
+        skip_: [MAX_HEIGHT](atomic.Value(?*Self)) = undefined,
 
         pub fn create(allocator: mem.Allocator, node_height: usize, value_data: ?*const ValueType, option: ?struct { isHead: bool = false }) *Self {
             var flag: atomic.Value(u16) = undefined;
@@ -39,12 +39,11 @@ pub fn SkipListNode(ValueType: type) type {
                 .spinLock_ = Thread.Mutex{},
             };
             if (value_data != null) ret.data_ = value_data.?.*;
-            ret.skip_.appendNTimes(allocator, atomic.Value(?*Self){ .raw = null }, node_height) catch unreachable;
+            @memset(&ret.skip_, atomic.Value(?*Self){ .raw = null });
             return ret;
         }
 
         pub fn destroy(self: *Self) void {
-            self.skip_.deinit(self.allocator_);
             self.allocator_.destroy(self);
         }
 
@@ -57,7 +56,7 @@ pub fn SkipListNode(ValueType: type) type {
         }
 
         pub inline fn skip(self: *Self, layer: usize) ?*Self {
-            return self.skip_.items[layer].load(.acquire);
+            return self.skip_[layer].load(.acquire);
         }
 
         // next valid node as in the linked list
@@ -68,7 +67,7 @@ pub fn SkipListNode(ValueType: type) type {
         }
 
         pub fn setSkip(self: *Self, h: u8, skip_node: ?*Self) void {
-            self.skip_.items[h].store(skip_node, .release);
+            self.skip_[h].store(skip_node, .release);
         }
 
         pub fn data(self: *const Self) *ValueType {
