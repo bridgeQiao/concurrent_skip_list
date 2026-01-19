@@ -1,7 +1,6 @@
 const std = @import("std");
 const atomic = std.atomic;
 const Thread = std.Thread;
-const ArrayList = std.ArrayList;
 const mem = std.mem;
 
 pub fn SkipListNode(ValueType: type, MAX_HEIGHT: i32) type {
@@ -20,6 +19,7 @@ pub fn SkipListNode(ValueType: type, MAX_HEIGHT: i32) type {
         allocator_: mem.Allocator,
         data_: ValueType = undefined,
         skip_: [MAX_HEIGHT](atomic.Value(?*Self)) = undefined,
+        list_node: std.SinglyLinkedList.Node = .{},
 
         pub fn create(allocator: mem.Allocator, node_height: usize, value_data: ?*const ValueType, option: ?struct { isHead: bool = false }) *Self {
             var flag: atomic.Value(u16) = undefined;
@@ -181,7 +181,7 @@ pub fn NodeRecycler(NodeType: type) type {
     return struct {
         const Self = @This();
         allocator_: mem.Allocator,
-        nodes: ArrayList(*NodeType) = .empty,
+        nodes: std.SinglyLinkedList = .{},
         refs_: atomic.Value(i32) = atomic.Value(i32){ .raw = 0 }, // current number of visitors to the list
         dirty: atomic.Value(bool) = atomic.Value(bool){ .raw = false }, // whether *nodes_ is non-empty
         lock: Thread.Mutex = Thread.Mutex{}, // protects access to *nodes_
@@ -193,17 +193,20 @@ pub fn NodeRecycler(NodeType: type) type {
         }
 
         pub fn deinit(self: *Self) void {
-            for (self.nodes.items) |node| {
-                node.destroy();
+            if (self.nodes.len() > 0) {
+                var it = self.nodes.first;
+                while (it) |node| : (it = node.next) {
+                    const l: *NodeType = @fieldParentPtr("list_node", node);
+                    l.destroy();
+                }
             }
-            self.nodes.deinit(self.allocator_);
         }
 
         pub fn add(self: *Self, node: *NodeType) void {
             self.lock.lock();
             defer self.lock.unlock();
 
-            self.nodes.append(self.allocator_, node) catch unreachable;
+            self.nodes.prepend(&node.list_node);
             self.dirty.store(true, .release);
         }
 
@@ -220,8 +223,7 @@ pub fn NodeRecycler(NodeType: type) type {
                 return self.refs_.fetchAdd(-1, .acq_rel);
             }
 
-            var newNodes: ArrayList(*NodeType) = .empty;
-            defer newNodes.deinit(self.allocator_);
+            var newNodes = std.SinglyLinkedList{};
             var ret: i32 = 0;
             {
                 // The order at which we lock, add, swap, is very important for
@@ -236,14 +238,16 @@ pub fn NodeRecycler(NodeType: type) type {
                     // so no more new nodes can be added, even though new accessors may be
                     // added after this.
                     newNodes = self.nodes;
-                    self.nodes = .empty;
+                    self.nodes = std.SinglyLinkedList{};
                     self.dirty.store(false, .release);
                 }
             }
 
-            if (newNodes.items.len > 0) {
-                for (newNodes.items) |node| {
-                    node.destroy();
+            if (newNodes.len() > 0) {
+                var it = newNodes.first;
+                while (it) |node| : (it = node.next) {
+                    const l: *NodeType = @fieldParentPtr("list_node", node);
+                    l.destroy();
                 }
             }
             return ret;
