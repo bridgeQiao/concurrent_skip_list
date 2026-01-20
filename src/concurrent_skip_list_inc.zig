@@ -3,6 +3,8 @@ const atomic = std.atomic;
 const Thread = std.Thread;
 const mem = std.mem;
 
+const node_pool = @import("skip_list_node_pool.zig");
+
 pub fn SkipListNode(ValueType: type, MAX_HEIGHT: i32) type {
     const Flag = struct {
         pub const Init: u16 = 0;
@@ -179,41 +181,24 @@ pub fn NodeRecycler(NodeType: type) type {
         const Self = @This();
         allocator_: mem.Allocator,
         nodes: std.DoublyLinkedList = .{},
-        free_nodes: std.DoublyLinkedList = .{},
+        free_nodes_pool: node_pool.SkipListNodePool(NodeType) = undefined,
         refs_: atomic.Value(i32) = atomic.Value(i32){ .raw = 0 }, // current number of visitors to the list
         dirty: atomic.Value(bool) = atomic.Value(bool){ .raw = false }, // whether *nodes_ is non-empty
         lock: Thread.Mutex = Thread.Mutex{}, // protects access to *nodes_
-        free_lock: Thread.Mutex = Thread.Mutex{}, // protects access to *free_nodes_
 
         pub fn init(allocator: mem.Allocator) Self {
             return Self{
                 .allocator_ = allocator,
+                .free_nodes_pool = node_pool.SkipListNodePool(NodeType).init(allocator),
             };
         }
 
         pub fn deinit(self: *Self) void {
-            while (self.nodes.popFirst()) |node| {
-                const l: *NodeType = @fieldParentPtr("list_node", node);
-                self.allocator_.destroy(l);
-            }
-            while (self.free_nodes.popFirst()) |node| {
-                const l: *NodeType = @fieldParentPtr("list_node", node);
-                self.allocator_.destroy(l);
-            }
+            self.free_nodes_pool.deinit();
         }
 
         pub fn createNode(self: *Self, node_height: usize, value_data: ?*const NodeType.ValueTypeT, option: ?NodeType.InitOption) *NodeType {
-            {
-                self.free_lock.lock();
-                defer self.free_lock.unlock();
-
-                if (self.free_nodes.popFirst()) |list_node| {
-                    const node: *NodeType = @fieldParentPtr("list_node", list_node);
-                    node.* = .init(node_height, value_data, option);
-                    return node;
-                }
-            }
-            const node: *NodeType = self.allocator_.create(NodeType) catch @panic("Out of memory");
+            const node: *NodeType = self.free_nodes_pool.allocate() catch @panic("Out of memory");
             node.* = .init(node_height, value_data, option);
             return node;
         }
@@ -260,11 +245,7 @@ pub fn NodeRecycler(NodeType: type) type {
             }
 
             if (newNodes.first != null) {
-                self.free_lock.lock();
-                defer self.free_lock.unlock();
-
-                newNodes.concatByMoving(&self.free_nodes);
-                self.free_nodes = newNodes;
+                self.free_nodes_pool.freeList(&newNodes);
             }
             return ret;
         }
