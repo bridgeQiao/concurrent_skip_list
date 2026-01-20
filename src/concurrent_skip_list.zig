@@ -34,7 +34,7 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
             var current: ?*NodeType = self.head.load(.unordered);
             while (current != null) {
                 const tmp = current.?.skip(0);
-                current.?.destroy();
+                self.recycle(current.?);
                 current = tmp;
             }
             self.recycler.deinit();
@@ -343,7 +343,7 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
                 const expected = oldHead;
                 if (self.head.cmpxchgStrong(expected, newHead, .release, .monotonic) != null) {
                     // if someone has already done the swap, just return.
-                    newHead.destroy();
+                    self.recycle(newHead);
                     return;
                 }
                 oldHead.setMarkedForRemoval();

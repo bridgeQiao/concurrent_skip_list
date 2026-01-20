@@ -30,7 +30,7 @@ pub fn main(init: std.process.Init) !void {
 
     // do test
     const num_readers = 4;
-    const num_writers = 1;
+    const num_writers = 4;
     for (0..2) |i| {
         _ = concurrent_test(gpa, init.io, @intCast(i), num_readers, num_writers);
     }
