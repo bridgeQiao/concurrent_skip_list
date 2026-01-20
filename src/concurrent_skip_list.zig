@@ -20,10 +20,12 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
         size: atomic.Value(isize) = undefined,
 
         pub fn init(gpa: mem.Allocator) Self {
+            var recycler = skip_list_inc.NodeRecycler(NodeType).init(gpa);
+            const head = recycler.createNode(MAX_HEIGHT, null, .{ .isHead = true });
             return Self{
-                .recycler = skip_list_inc.NodeRecycler(NodeType).init(gpa),
+                .recycler = recycler,
                 .allocator = gpa,
-                .head = atomic.Value(*NodeType){ .raw = NodeType.create(gpa, MAX_HEIGHT, null, .{ .isHead = true }) },
+                .head = atomic.Value(*NodeType){ .raw = head },
                 .size = atomic.Value(isize){ .raw = 0 },
             };
         }
@@ -163,7 +165,7 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
                 }
 
                 // locks acquired and all valid, need to modify the links under the locks.
-                newNode = NodeType.create(self.allocator, @intCast(nodeHeight), data, null);
+                newNode = self.recycler.createNode(@intCast(nodeHeight), data, null);
                 for (0..@intCast(nodeHeight)) |k| {
                     newNode.setSkip(@intCast(k), succs[k]);
                     preds[k].setSkip(@intCast(k), newNode);
@@ -330,7 +332,7 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
             }
 
             var newHead =
-                NodeType.create(self.allocator, @intCast(node_height), undefined, .{ .isHead = true });
+                self.recycler.createNode(@intCast(node_height), undefined, .{ .isHead = true });
 
             { // need to guard the head node in case others are adding/removing
                 // nodes linked to the head.

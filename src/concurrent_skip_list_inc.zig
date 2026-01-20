@@ -21,26 +21,32 @@ pub fn SkipListNode(ValueType: type, MAX_HEIGHT: i32) type {
         skip_: [MAX_HEIGHT](atomic.Value(?*Self)) = undefined,
         list_node: std.SinglyLinkedList.Node = .{},
 
-        pub fn create(allocator: mem.Allocator, node_height: usize, value_data: ?*const ValueType, option: ?struct { isHead: bool = false }) *Self {
-            var flag: atomic.Value(u16) = undefined;
-            flag.store(Flag.Init, .release);
+        pub const ValueTypeT = ValueType;
+        pub const InitOption = struct {
+            isHead: bool = false,
+        };
+
+        pub fn create(allocator: mem.Allocator, node_height: usize, value_data: ?*const ValueType, option: ?InitOption) *Self {
+            var ret = allocator.create(Self) catch unreachable;
+            ret.allocator_ = allocator;
+            ret.reinit(node_height, value_data, option);
+            return ret;
+        }
+
+        pub fn reinit(self: *Self, node_height: usize, value_data: ?*const ValueType, option: ?InitOption) void {
+            var flag: u16 = Flag.Init;
             if (option) |opt| {
                 if (opt.isHead) {
-                    flag.store(Flag.IsHeadNode, .release);
+                    flag = Flag.IsHeadNode;
                 }
             }
 
-            var ret = allocator.create(Self) catch unreachable;
-
-            ret.* = Self{
-                .flags_ = flag,
-                .height_ = @intCast(node_height),
-                .allocator_ = allocator,
-                .spinLock_ = Thread.Mutex{},
-            };
-            if (value_data != null) ret.data_ = value_data.?.*;
-            @memset(&ret.skip_, atomic.Value(?*Self){ .raw = null });
-            return ret;
+            self.flags_ = atomic.Value(u16){ .raw = flag };
+            self.height_ = @intCast(node_height);
+            self.spinLock_ = Thread.Mutex{};
+            self.list_node = .{};
+            if (value_data != null) self.data_ = value_data.?.*;
+            @memset(&self.skip_, atomic.Value(?*Self){ .raw = null });
         }
 
         pub fn destroy(self: *Self) void {
@@ -182,9 +188,11 @@ pub fn NodeRecycler(NodeType: type) type {
         const Self = @This();
         allocator_: mem.Allocator,
         nodes: std.SinglyLinkedList = .{},
+        free_nodes: std.SinglyLinkedList = .{},
         refs_: atomic.Value(i32) = atomic.Value(i32){ .raw = 0 }, // current number of visitors to the list
         dirty: atomic.Value(bool) = atomic.Value(bool){ .raw = false }, // whether *nodes_ is non-empty
         lock: Thread.Mutex = Thread.Mutex{}, // protects access to *nodes_
+        free_lock: Thread.Mutex = Thread.Mutex{}, // protects access to *free_nodes_
 
         pub fn init(allocator: mem.Allocator) Self {
             return Self{
@@ -193,13 +201,28 @@ pub fn NodeRecycler(NodeType: type) type {
         }
 
         pub fn deinit(self: *Self) void {
-            if (self.nodes.len() > 0) {
-                var it = self.nodes.first;
-                while (it) |node| : (it = node.next) {
-                    const l: *NodeType = @fieldParentPtr("list_node", node);
-                    l.destroy();
+            while (self.nodes.popFirst()) |node| {
+                const l: *NodeType = @fieldParentPtr("list_node", node);
+                l.destroy();
+            }
+            while (self.free_nodes.popFirst()) |node| {
+                const l: *NodeType = @fieldParentPtr("list_node", node);
+                l.destroy();
+            }
+        }
+
+        pub fn createNode(self: *Self, node_height: usize, value_data: ?*const NodeType.ValueTypeT, option: ?NodeType.InitOption) *NodeType {
+            {
+                self.free_lock.lock();
+                defer self.free_lock.unlock();
+
+                if (self.free_nodes.popFirst()) |list_node| {
+                    const node: *NodeType = @fieldParentPtr("list_node", list_node);
+                    node.reinit(node_height, value_data, option);
+                    return node;
                 }
             }
+            return NodeType.create(self.allocator_, node_height, value_data, option);
         }
 
         pub fn add(self: *Self, node: *NodeType) void {
@@ -243,11 +266,12 @@ pub fn NodeRecycler(NodeType: type) type {
                 }
             }
 
-            if (newNodes.len() > 0) {
-                var it = newNodes.first;
-                while (it) |node| : (it = node.next) {
-                    const l: *NodeType = @fieldParentPtr("list_node", node);
-                    l.destroy();
+            if (newNodes.first != null) {
+                self.free_lock.lock();
+                defer self.free_lock.unlock();
+
+                while (newNodes.popFirst()) |node| {
+                    self.free_nodes.prepend(node);
                 }
             }
             return ret;
