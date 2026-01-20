@@ -19,7 +19,7 @@ pub fn SkipListNode(ValueType: type, MAX_HEIGHT: i32) type {
         allocator_: mem.Allocator,
         data_: ValueType = undefined,
         skip_: [MAX_HEIGHT](atomic.Value(?*Self)) = undefined,
-        list_node: std.SinglyLinkedList.Node = .{},
+        list_node: std.DoublyLinkedList.Node = .{},
 
         pub const ValueTypeT = ValueType;
         pub const InitOption = struct {
@@ -187,8 +187,8 @@ pub fn NodeRecycler(NodeType: type) type {
     return struct {
         const Self = @This();
         allocator_: mem.Allocator,
-        nodes: std.SinglyLinkedList = .{},
-        free_nodes: std.SinglyLinkedList = .{},
+        nodes: std.DoublyLinkedList = .{},
+        free_nodes: std.DoublyLinkedList = .{},
         refs_: atomic.Value(i32) = atomic.Value(i32){ .raw = 0 }, // current number of visitors to the list
         dirty: atomic.Value(bool) = atomic.Value(bool){ .raw = false }, // whether *nodes_ is non-empty
         lock: Thread.Mutex = Thread.Mutex{}, // protects access to *nodes_
@@ -246,7 +246,7 @@ pub fn NodeRecycler(NodeType: type) type {
                 return self.refs_.fetchAdd(-1, .acq_rel);
             }
 
-            var newNodes = std.SinglyLinkedList{};
+            var newNodes = std.DoublyLinkedList{};
             var ret: i32 = 0;
             {
                 // The order at which we lock, add, swap, is very important for
@@ -261,7 +261,7 @@ pub fn NodeRecycler(NodeType: type) type {
                     // so no more new nodes can be added, even though new accessors may be
                     // added after this.
                     newNodes = self.nodes;
-                    self.nodes = std.SinglyLinkedList{};
+                    self.nodes = std.DoublyLinkedList{};
                     self.dirty.store(false, .release);
                 }
             }
@@ -270,9 +270,8 @@ pub fn NodeRecycler(NodeType: type) type {
                 self.free_lock.lock();
                 defer self.free_lock.unlock();
 
-                while (newNodes.popFirst()) |node| {
-                    self.free_nodes.prepend(node);
-                }
+                newNodes.concatByMoving(&self.free_nodes);
+                self.free_nodes = newNodes;
             }
             return ret;
         }
