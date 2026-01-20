@@ -245,7 +245,11 @@ pub fn NodeRecycler(NodeType: type) type {
             }
 
             if (newNodes.first != null) {
-                self.free_nodes_pool.freeList(&newNodes);
+                var it = newNodes.first;
+                while (it) |node| : (it = node.next) {
+                    const n: *NodeType = @fieldParentPtr("list_node", node);
+                    self.free_nodes_pool.free(n);
+                }
             }
             return ret;
         }
