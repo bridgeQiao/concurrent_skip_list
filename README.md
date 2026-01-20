@@ -68,38 +68,38 @@ My computer is `Mac mini m2`, 8G memory. Use `-Doptimize=ReleaseSafe`.
 W1 R4:
 
 ```bash
-concurrent test: main.ThreadArgs.Mode.SKIPLIST
-read: 59116408.8 ops/sec
-write: 516296.6 ops/sec
-total: 59632705.4 ops/sec
-concurrent test: main.ThreadArgs.Mode.MAP_MUTEX
-read: 1550502.0 ops/sec
-write: 2444.8 ops/sec
-total: 1552946.8 ops/sec
+concurrent test: .SKIPLIST
+read: 6132613.8 ops/sec
+write: 561943.2 ops/sec
+total: 6694557.0 ops/sec
+concurrent test: .MAP_MUTEX
+read: 1047670.2 ops/sec
+write: 86658.6 ops/sec
+total: 1134328.8 ops/sec
 ```
 
 W1 R8:
 
 ```bash
-concurrent test: main.ThreadArgs.Mode.SKIPLIST
-read: 52487349.6 ops/sec
-write: 553217.8 ops/sec
-total: 53040567.4 ops/sec
-concurrent test: main.ThreadArgs.Mode.MAP_MUTEX
-read: 6319045.2 ops/sec
-write: 8136.4 ops/sec
-total: 6327181.6 ops/sec
+concurrent test: .SKIPLIST
+read: 9415477.8 ops/sec
+write: 423367.6 ops/sec
+total: 9838845.4 ops/sec
+concurrent test: .MAP_MUTEX
+read: 1333158.0 ops/sec
+write: 54452.8 ops/sec
+total: 1387610.8 ops/sec
 ```
 
 W4 R4:
 
 ```bash
-concurrent test: main.ThreadArgs.Mode.SKIPLIST
-read: 47985684.6 ops/sec
-write: 2717000.4 ops/sec
-total: 50702685.0 ops/sec
-concurrent test: main.ThreadArgs.Mode.MAP_MUTEX
-read: 2650765.8 ops/sec
-write: 462557.8 ops/sec
-total: 3113323.6 ops/sec
+concurrent test: .SKIPLIST
+read: 3216448.8 ops/sec
+write: 1333397.8 ops/sec
+total: 4549846.6 ops/sec
+concurrent test: .MAP_MUTEX
+read: 731891.4 ops/sec
+write: 243959.6 ops/sec
+total: 975851.0 ops/sec
 ```

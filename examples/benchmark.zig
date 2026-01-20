@@ -1,6 +1,3 @@
-//! By convention, main.zig is where your main function lives in the case that
-//! you are building an executable. If you are making a library, the convention
-//! is to delete this file and start with root.zig instead.
 const std = @import("std");
 const mem = std.mem;
 const skip_list = @import("concurrent_skip_list");
@@ -33,7 +30,7 @@ pub fn main(init: std.process.Init) !void {
 
     // do test
     const num_readers = 4;
-    const num_writers = 4;
+    const num_writers = 1;
     for (0..2) |i| {
         _ = concurrent_test(gpa, init.io, @intCast(i), num_readers, num_writers);
     }
