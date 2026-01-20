@@ -2,7 +2,32 @@
 
 Folly-inspired, Zig-powered.
 
-BenchMark origin: [greensky00/skiplist](https://github.com/greensky00/skiplist.git). Thanks!
+This project provides a high-performance **concurrent skip list** (lock-free / fine-grained locking variants are available) designed for multi-threaded key-value workloads. BenchMark origin: [greensky00/skiplist](https://github.com/greensky00/skiplist.git). Thanks!
+
+## Performance Recommendations
+
+This implementation compared different concurrency strategies. Choose the most suitable one based on your workload and hardware:
+
+- **Multi-threaded scenarios (high core count machines)**  
+  If your machine has **many CPU cores** (e.g. ≥ work threads num), we generally recommend using the **skiplist-based** concurrent map.  
+  It usually scales better than mutex-protected `hash_map` under high contention with many threads.
+
+- **Mutex + hash_map** (most balanced choice)  
+  For **general-purpose** use cases or machines with moderate core counts (< work threads num), the **mutex + hash_map** implementation often delivers the most balanced performance — good throughput for both reads and writes.
+
+- **RWLock + hash_map** (read-heavy workloads)  
+  If your workload is **heavily read-dominant**, the **reader-writer lock + hash_map** variant can provide significantly better performance under concurrent reads.  
+  However, write performance will be noticeably worse than the mutex-based version — only choose this when reads clearly dominate.
+
+Quick summary:
+
+| Scenario                          | Recommended Choice       | When to prefer it                              |
+|-----------------------------------|---------------------------|------------------------------------------------|
+| Many cores + mixed read/write     | Skiplist                 | Better scaling with very high thread counts    |
+| General / balanced workload       | Mutex + hash_map         | Most consistent & predictable performance      |
+| Read-heavy (many more reads)      | RWLock + hash_map        | Maximize read throughput, accept slower writes |
+
+Feel free to run your own benchmarks with your specific workload, key distribution, and hardware — the best choice can vary depending on actual access patterns.
 
 ## use it
 
