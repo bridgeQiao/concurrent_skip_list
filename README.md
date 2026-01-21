@@ -8,26 +8,26 @@ This project provides a high-performance **concurrent skip list** (lock-free / f
 
 This implementation compared different concurrency strategies. Choose the most suitable one based on your workload and hardware:
 
-- **Skiplist (preferred choice)**
+- **Skiplist** (prioritize write performance)
 
-  We generally recommend using the **skiplist-based** concurrent map in any scenario. However, you **must benchmark it first** in your actual deployment environment to ensure it performs as expected. Be aware that performance can be significantly affected by Docker containers, third-party memory allocators (e.g., mimalloc), and other environmental factors.
+  The **skiplist-based** concurrent map is optimized to prioritize write performance. However, you **must benchmark it first** in your actual deployment environment to ensure it performs as expected. Be aware that performance can be significantly affected by Docker containers, third-party memory allocators (e.g., mimalloc), and other environmental factors.
 
 - **Mutex + hash_map** (fallback if skiplist doesn't perform as expected)
 
-  For **general-purpose** use cases or machines with moderate core counts (< work threads num), the **mutex + hash_map** implementation often delivers the most balanced performance — good throughput for both reads and writes.
+  For **general-purpose** use cases, the **mutex + hash_map** implementation often delivers the most balanced performance — good throughput for both reads and writes.
 
-- **RWLock + hash_map** (read-heavy workloads)
+- **RWLock + hash_map** (prioritize read performance)
 
-  If your workload is **heavily read-dominant**, the **reader-writer lock + hash_map** variant can provide significantly better performance under concurrent reads.
+  The **reader-writer lock + hash_map** variant is optimized to prioritize read performance and can provide significantly better throughput under concurrent reads.
   However, write performance will be noticeably worse than the mutex-based version — only choose this when reads clearly dominate.
 
 Quick summary:
 
 | Scenario                          | Recommended Choice       | When to prefer it                              |
 |-----------------------------------|---------------------------|------------------------------------------------|
-| Any scenario                      | Skiplist                 | Always preferred, but must benchmark first    |
+| Prioritize write performance      | Skiplist                 | Optimized for write throughput, must benchmark first |
 | General / balanced workload       | Mutex + hash_map         | Most consistent & predictable performance      |
-| Read-heavy (many more reads)      | RWLock + hash_map        | Maximize read throughput, accept slower writes |
+| Prioritize read performance       | RWLock + hash_map        | Optimized for read throughput, accept slower writes |
 
 Feel free to run your own benchmarks with your specific workload, key distribution, and hardware — the best choice can vary depending on actual access patterns.
 
@@ -92,41 +92,41 @@ pub fn main(init: std.process.Init) !void {
 
 My computer is `Mac mini m2`, 8G memory. Use `-Doptimize=ReleaseSafe`.
 
-W1 R4:
+W8 R1:
 
 ```bash
 concurrent test: .SKIPLIST
-read: 6132613.8 ops/sec
-write: 561943.2 ops/sec
-total: 6694557.0 ops/sec
+read: 651899.4 ops/sec
+write: 2228922.6 ops/sec
+total: 2880822.0 ops/sec
 concurrent test: .MAP_MUTEX
-read: 1047670.2 ops/sec
-write: 86658.6 ops/sec
-total: 1134328.8 ops/sec
+read: 5443653.0 ops/sec
+write: 169249.2 ops/sec
+total: 5612902.2 ops/sec
 ```
 
 W1 R8:
 
 ```bash
 concurrent test: .SKIPLIST
-read: 9415477.8 ops/sec
-write: 423367.6 ops/sec
-total: 9838845.4 ops/sec
+read: 9461286.0 ops/sec
+write: 431863.2 ops/sec
+total: 9893149.2 ops/sec
 concurrent test: .MAP_MUTEX
-read: 1333158.0 ops/sec
-write: 54452.8 ops/sec
-total: 1387610.8 ops/sec
+read: 13446618.6 ops/sec
+write: 57112.0 ops/sec
+total: 13503730.6 ops/sec
 ```
 
 W4 R4:
 
 ```bash
 concurrent test: .SKIPLIST
-read: 3216448.8 ops/sec
-write: 1333397.8 ops/sec
-total: 4549846.6 ops/sec
+read: 3441819.6 ops/sec
+write: 1377360.8 ops/sec
+total: 4819180.4 ops/sec
 concurrent test: .MAP_MUTEX
-read: 731891.4 ops/sec
-write: 243959.6 ops/sec
-total: 975851.0 ops/sec
+read: 7980547.2 ops/sec
+write: 111181.2 ops/sec
+total: 8091728.4 ops/sec
 ```
