@@ -2,6 +2,8 @@ const std = @import("std");
 const mem = std.mem;
 const skip_list = @import("concurrent_skip_list");
 
+const Timestamp = std.Io.Timestamp;
+
 const NodeType = struct {
     const Self = @This();
     first: i32 = 0,
@@ -17,7 +19,7 @@ const SkipListType = skip_list.ConcurrentSkipList(NodeType, &NodeType.less, 16);
 pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const data: NodeType = .{ .first = 30, .second = 30 };
-    var sl = SkipListType.init(gpa);
+    var sl = SkipListType.init(gpa, init.io);
     defer sl.deinit();
 
     var access = SkipListType.Accessor.init(&sl);
@@ -48,7 +50,7 @@ const ThreadArgs = struct {
     temp: u64,
     sl: *SkipListType,
     stdmap: *std.hash_map.AutoHashMap(i32, i32),
-    lock: *std.Thread.Mutex,
+    lock: *std.Io.Mutex,
 
     // 模式枚举
     const Mode = enum {
@@ -74,11 +76,11 @@ fn num_primes(number: u64, max_prime: usize) usize {
 
 // 读者线程函数
 fn reader(args: *ThreadArgs) void {
-    var timer = std.time.Timer.start() catch unreachable;
+    const now_time = Timestamp.now(args.io, .real);
     var seed: u64 = undefined;
     args.io.random(std.mem.asBytes(&seed));
     var rng = std.Random.DefaultPrng.init(seed);
-    while (timer.read() < @as(u64, @intCast(args.duration_ms)) * 1_000_000) {
+    while (Timestamp.durationTo(now_time, Timestamp.now(args.io, .real)).toMilliseconds() < 5_000) {
         const r = rng.random().intRangeAtMost(i32, 0, args.num - 1);
         const max_walks: i32 = 3;
         var walks: i32 = 0;
@@ -93,8 +95,8 @@ fn reader(args: *ThreadArgs) void {
                 walks += 1;
             }
         } else if (args.mode == .MAP_MUTEX) {
-            args.lock.lock();
-            defer args.lock.unlock();
+            args.lock.lock(args.io) catch unreachable;
+            defer args.lock.unlock(args.io);
             if (args.stdmap.get(r)) |value| {
                 args.temp += num_primes(@intCast(value), 10000);
                 walks += 1;
@@ -111,11 +113,11 @@ fn reader(args: *ThreadArgs) void {
 
 // 写者线程函数
 fn writer(args: *ThreadArgs) void {
-    var timer = std.time.Timer.start() catch unreachable;
+    const now_time = Timestamp.now(args.io, .real);
     var seed: u64 = undefined;
     args.io.random(std.mem.asBytes(&seed));
     var rng = std.Random.DefaultPrng.init(seed);
-    while (timer.read() < @as(u64, @intCast(args.duration_ms)) * 1_000_000) {
+    while (Timestamp.durationTo(now_time, Timestamp.now(args.io, .real)).toMilliseconds() < 5_000) {
         var r = rng.random().intRangeAtMost(i32, 0, @divTrunc(args.num, args.modulo) - 1);
         r *= args.modulo;
         r += args.id;
@@ -131,8 +133,8 @@ fn writer(args: *ThreadArgs) void {
                 _ = access.add(&data_add);
             }
         } else if (args.mode == .MAP_MUTEX) {
-            args.lock.lock();
-            defer args.lock.unlock();
+            args.lock.lock(args.io) catch unreachable;
+            defer args.lock.unlock(args.io);
             if (args.stdmap.contains(r)) {
                 _ = args.stdmap.remove(r);
             } else {
@@ -154,11 +156,11 @@ fn concurrent_test(allocator: mem.Allocator, io: std.Io, mode: i32, comptime num
     std.debug.print("concurrent test: {}\n", .{@as(ThreadArgs.Mode, @enumFromInt(mode))});
 
     // 初始化数据结构
-    var sl = SkipListType.init(allocator);
+    var sl = SkipListType.init(allocator, io);
     defer sl.deinit();
     var stdmap = std.hash_map.AutoHashMap(i32, i32).init(allocator);
     defer stdmap.deinit();
-    var lock = std.Thread.Mutex{};
+    var lock: std.Io.Mutex = .init;
 
     const num: i32 = 10_000_000;
     const duration_ms: i32 = 5000;

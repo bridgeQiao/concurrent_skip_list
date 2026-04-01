@@ -1,7 +1,8 @@
 const std = @import("std");
 const atomic = std.atomic;
-const Thread = std.Thread;
 const mem = std.mem;
+
+const Mutex = std.Io.Mutex;
 
 pub fn SkipListNode(ValueType: type, MAX_HEIGHT: i32) type {
     const Flag = struct {
@@ -13,9 +14,10 @@ pub fn SkipListNode(ValueType: type, MAX_HEIGHT: i32) type {
     return struct {
         const Self = @This();
 
+        io: std.Io,
         flags_: atomic.Value(u16),
         height_: u8,
-        spinLock_: Thread.Mutex,
+        spinLock_: Mutex,
         data_: ValueType = undefined,
         skip_: [MAX_HEIGHT](atomic.Value(?*Self)) = undefined,
         list_node: std.DoublyLinkedList.Node = .{},
@@ -25,7 +27,7 @@ pub fn SkipListNode(ValueType: type, MAX_HEIGHT: i32) type {
             isHead: bool = false,
         };
 
-        pub fn init(node_height: usize, value_data: ?*const ValueType, option: ?InitOption) Self {
+        pub fn init(io: std.Io, node_height: usize, value_data: ?*const ValueType, option: ?InitOption) Self {
             var flag: u16 = Flag.Init;
             if (option) |opt| {
                 if (opt.isHead) {
@@ -34,9 +36,10 @@ pub fn SkipListNode(ValueType: type, MAX_HEIGHT: i32) type {
             }
 
             var self = Self{
+                .io = io,
                 .flags_ = atomic.Value(u16){ .raw = flag },
                 .height_ = @intCast(node_height),
-                .spinLock_ = Thread.Mutex{},
+                .spinLock_ = .init,
                 .list_node = .{},
             };
             if (value_data != null) self.data_ = value_data.?.*;
@@ -78,8 +81,8 @@ pub fn SkipListNode(ValueType: type, MAX_HEIGHT: i32) type {
         }
 
         // return locked mutex
-        pub fn acquireGuard(self: *Self) *Thread.Mutex {
-            self.spinLock_.lock();
+        pub fn acquireGuard(self: *Self) *Mutex {
+            self.spinLock_.lock(self.io) catch unreachable;
             return &self.spinLock_;
         }
 
@@ -115,24 +118,20 @@ pub const SkipListRandomHeight = struct {
     const Self = @This();
     const kMaxHeight = 64;
 
-    // instance related
-    var call_once = std.once(init);
-    var instance_: Self = undefined;
-
     lookupTable_: [kMaxHeight]f64,
     sizeLimitTable_: [kMaxHeight]isize,
     prng: std.Random.DefaultPrng,
 
-    fn init() void {
-        instance_.initLookupTable();
-
-        // init random
-        instance_.prng = std.Random.DefaultPrng.init(0);
-    }
-
-    pub fn instance() *Self {
-        call_once.call();
-        return &instance_;
+    pub fn init(io: std.Io) Self {
+        var seed: u64 = undefined;
+        io.random(std.mem.asBytes(&seed));
+        var self = Self{
+            .lookupTable_ = undefined,
+            .sizeLimitTable_ = undefined,
+            .prng = std.Random.DefaultPrng.init(seed),
+        };
+        self.initLookupTable();
+        return self;
     }
 
     pub fn getHeight(self: *Self, maxHeight: usize) usize {
@@ -178,16 +177,18 @@ pub fn NodeRecycler(NodeType: type) type {
     return struct {
         const Self = @This();
         allocator_: mem.Allocator,
+        io: std.Io,
         nodes: std.DoublyLinkedList = .{},
         free_nodes: std.DoublyLinkedList = .{},
         refs_: atomic.Value(i32) = atomic.Value(i32){ .raw = 0 }, // current number of visitors to the list
         dirty: atomic.Value(bool) = atomic.Value(bool){ .raw = false }, // whether *nodes_ is non-empty
-        lock: Thread.Mutex = Thread.Mutex{}, // protects access to *nodes_
-        free_lock: Thread.Mutex = Thread.Mutex{}, // protects access to *free_nodes_
+        lock: Mutex = .init, // protects access to *nodes_
+        free_lock: Mutex = .init, // protects access to *free_nodes_
 
-        pub fn init(allocator: mem.Allocator) Self {
+        pub fn init(allocator: mem.Allocator, io: std.Io) Self {
             return Self{
                 .allocator_ = allocator,
+                .io = io,
             };
         }
 
@@ -204,23 +205,23 @@ pub fn NodeRecycler(NodeType: type) type {
 
         pub fn createNode(self: *Self, node_height: usize, value_data: ?*const NodeType.ValueTypeT, option: ?NodeType.InitOption) *NodeType {
             {
-                self.free_lock.lock();
-                defer self.free_lock.unlock();
+                self.free_lock.lock(self.io) catch unreachable;
+                defer self.free_lock.unlock(self.io);
 
                 if (self.free_nodes.popFirst()) |list_node| {
                     const node: *NodeType = @fieldParentPtr("list_node", list_node);
-                    node.* = .init(node_height, value_data, option);
+                    node.* = .init(self.io, node_height, value_data, option);
                     return node;
                 }
             }
             const node: *NodeType = self.allocator_.create(NodeType) catch @panic("Out of memory");
-            node.* = .init(node_height, value_data, option);
+            node.* = .init(self.io, node_height, value_data, option);
             return node;
         }
 
         pub fn add(self: *Self, node: *NodeType) void {
-            self.lock.lock();
-            defer self.lock.unlock();
+            self.lock.lock(self.io) catch unreachable;
+            defer self.lock.unlock(self.io);
 
             self.nodes.prepend(&node.list_node);
             self.dirty.store(true, .release);
@@ -244,8 +245,8 @@ pub fn NodeRecycler(NodeType: type) type {
             {
                 // The order at which we lock, add, swap, is very important for
                 // correctness.
-                self.lock.lock();
-                defer self.lock.unlock();
+                self.lock.lock(self.io) catch unreachable;
+                defer self.lock.unlock(self.io);
 
                 ret = self.refs_.fetchAdd(-1, .acq_rel);
                 if (ret == 1) {
@@ -260,8 +261,8 @@ pub fn NodeRecycler(NodeType: type) type {
             }
 
             if (newNodes.first != null) {
-                self.free_lock.lock();
-                defer self.free_lock.unlock();
+                self.free_lock.lock(self.io) catch unreachable;
+                defer self.free_lock.unlock(self.io);
 
                 newNodes.concatByMoving(&self.free_nodes);
                 self.free_nodes = newNodes;

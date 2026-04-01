@@ -1,7 +1,8 @@
 const std = @import("std");
 const mem = std.mem;
 const atomic = std.atomic;
-const Thread = std.Thread;
+
+const Mutex = std.Io.Mutex;
 
 const skip_list_inc = @import("concurrent_skip_list_inc.zig");
 
@@ -15,16 +16,20 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
         pub const Accessor = SLAccessor(Self);
 
         recycler: skip_list_inc.NodeRecycler(NodeType),
+        random_height: skip_list_inc.SkipListRandomHeight,
         allocator: mem.Allocator,
+        io: std.Io,
         head: atomic.Value(*NodeType) = undefined,
         size: atomic.Value(isize) = undefined,
 
-        pub fn init(gpa: mem.Allocator) Self {
-            var recycler = skip_list_inc.NodeRecycler(NodeType).init(gpa);
+        pub fn init(gpa: mem.Allocator, io: std.Io) Self {
+            var recycler = skip_list_inc.NodeRecycler(NodeType).init(gpa, io);
             const head = recycler.createNode(MAX_HEIGHT, null, .{ .isHead = true });
             return Self{
                 .recycler = recycler,
+                .random_height = skip_list_inc.SkipListRandomHeight.init(io),
                 .allocator = gpa,
+                .io = io,
                 .head = atomic.Value(*NodeType){ .raw = head },
                 .size = atomic.Value(isize){ .raw = 0 },
             };
@@ -106,7 +111,7 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
         // lock all the necessary nodes for changing (adding or removing) the list.
         // returns true if all the lock acquired successfully and the related nodes
         // are all validate (not in certain pending states), false otherwise.
-        fn lockNodesForChange(nodeHeight: usize, guards: []?*Thread.Mutex, preds: []*NodeType, succs: []?*NodeType, adding: bool) bool {
+        fn lockNodesForChange(nodeHeight: usize, guards: []?*Mutex, preds: []*NodeType, succs: []?*NodeType, adding: bool) bool {
             var pred: *NodeType = undefined;
             var succ: ?*NodeType = null;
             var prevPred: *NodeType = undefined;
@@ -152,12 +157,12 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
 
                 // need to capped at the original height -- the real height may have grown
                 const nodeHeight =
-                    skip_list_inc.SkipListRandomHeight.instance().getHeight(max_layer + 1);
+                    self.random_height.getHeight(max_layer + 1);
 
-                var guards = [1]?*Thread.Mutex{null} ** MAX_HEIGHT;
+                var guards = [1]?*Mutex{null} ** MAX_HEIGHT;
                 defer {
                     for (guards) |lock| {
-                        if (lock != null) lock.?.unlock();
+                        if (lock != null) lock.?.unlock(self.io);
                     }
                 }
                 if (!lockNodesForChange(nodeHeight, &guards, &preds, &succs, true)) {
@@ -177,8 +182,7 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
             }
 
             const hgt = self.height();
-            const sizeLimit =
-                skip_list_inc.SkipListRandomHeight.instance().getSizeLimit(hgt);
+            const sizeLimit = self.random_height.getSizeLimit(hgt);
 
             if (hgt < MAX_HEIGHT and newSize > sizeLimit) {
                 self.growHeight(hgt + 1);
@@ -188,10 +192,10 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
 
         fn remove(self: *Self, data: *const value_type) bool {
             var nodeToDelete: *NodeType = undefined;
-            var nodeGuard: ?*Thread.Mutex = null;
+            var nodeGuard: ?*Mutex = null;
             defer {
                 if (nodeGuard != null) {
-                    nodeGuard.?.unlock();
+                    nodeGuard.?.unlock(self.io);
                 }
             }
             var isMarked = false;
@@ -209,10 +213,10 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
                 if (!isMarked) {
                     nodeToDelete = succs[@intCast(layer)].?;
                     nodeHeight = nodeToDelete.height();
-                    if (nodeGuard != null) nodeGuard.?.unlock();
+                    if (nodeGuard != null) nodeGuard.?.unlock(self.io);
                     nodeGuard = nodeToDelete.acquireGuard();
                     defer {
-                        nodeGuard.?.unlock();
+                        nodeGuard.?.unlock(self.io);
                         nodeGuard = null;
                     }
                     if (nodeToDelete.markedForRemoval()) {
@@ -223,10 +227,10 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
                 }
 
                 // acquire pred locks from bottom layer up
-                var guards = [1]?*Thread.Mutex{null} ** MAX_HEIGHT;
+                var guards = [1]?*Mutex{null} ** MAX_HEIGHT;
                 defer {
                     for (guards) |lock| {
-                        if (lock != null) lock.?.unlock();
+                        if (lock != null) lock.?.unlock(self.io);
                     }
                 }
                 if (!lockNodesForChange(nodeHeight, &guards, &preds, &succs, false)) {
@@ -337,8 +341,8 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
             { // need to guard the head node in case others are adding/removing
                 // nodes linked to the head.
                 var g = oldHead.acquireGuard();
-                g.lock();
-                defer g.unlock();
+                g.lock(self.io) catch unreachable;
+                defer g.unlock(self.io);
                 _ = newHead.copyHead(oldHead);
                 const expected = oldHead;
                 if (self.head.cmpxchgStrong(expected, newHead, .release, .monotonic) != null) {
