@@ -138,7 +138,7 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
 
         fn addOrGetData(self: *Self, data: *const value_type) struct { first: *NodeType, second: isize } {
             var preds: [MAX_HEIGHT]*NodeType = undefined;
-            var succs: [MAX_HEIGHT]?*NodeType = [1]?*NodeType{null} ** MAX_HEIGHT;
+            var succs: [MAX_HEIGHT]?*NodeType = @splat(null);
             var newNode: *NodeType = undefined;
             var newSize: isize = 0;
             while (true) {
@@ -159,7 +159,7 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
                 const nodeHeight =
                     self.random_height.getHeight(max_layer + 1);
 
-                var guards = [1]?*Mutex{null} ** MAX_HEIGHT;
+                var guards: [MAX_HEIGHT]?*Mutex = @splat(null);
                 defer {
                     for (guards) |lock| {
                         if (lock != null) lock.?.unlock(self.io);
@@ -201,7 +201,7 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
             var isMarked = false;
             var nodeHeight: usize = 0;
             var preds: [MAX_HEIGHT]*NodeType = undefined;
-            var succs: [MAX_HEIGHT]?*NodeType = [1]?*NodeType{null} ** MAX_HEIGHT;
+            var succs: [MAX_HEIGHT]?*NodeType = @splat(null);
 
             while (true) {
                 var max_layer: usize = 0;
@@ -227,7 +227,7 @@ pub fn ConcurrentSkipList(T: type, Comp: *const fn (lhs: *const T, rhs: *const T
                 }
 
                 // acquire pred locks from bottom layer up
-                var guards = [1]?*Mutex{null} ** MAX_HEIGHT;
+                var guards: [MAX_HEIGHT]?*Mutex = @splat(null);
                 defer {
                     for (guards) |lock| {
                         if (lock != null) lock.?.unlock(self.io);

@@ -153,7 +153,7 @@ fn writer(args: *ThreadArgs) void {
 
 // 并发测试函数
 fn concurrent_test(allocator: mem.Allocator, io: std.Io, mode: i32, comptime num_readers: i32, comptime num_writers: i32) i32 {
-    std.debug.print("concurrent test: {}\n", .{@as(ThreadArgs.Mode, @enumFromInt(mode))});
+    std.debug.print("concurrent test: {}\n", .{@as(ThreadArgs.Mode, @fromBackingInt(@intCast(mode)))});
 
     // 初始化数据结构
     var sl = SkipListType.init(allocator, io);
@@ -166,13 +166,13 @@ fn concurrent_test(allocator: mem.Allocator, io: std.Io, mode: i32, comptime num
     const duration_ms: i32 = 5000;
 
     // 创建读者线程
-    var r_args = [_]ThreadArgs{undefined} ** num_readers;
+    var r_args: [num_readers]ThreadArgs = @splat(undefined);
     var readers: std.ArrayList(std.Io.Future(void)) = .empty;
     defer readers.deinit(allocator);
     for (0..num_readers) |i| {
         r_args[i] = ThreadArgs{
             .io = io,
-            .mode = @enumFromInt(mode),
+            .mode = @fromBackingInt(@intCast(mode)),
             .num = num,
             .id = 0,
             .modulo = 0,
@@ -187,14 +187,13 @@ fn concurrent_test(allocator: mem.Allocator, io: std.Io, mode: i32, comptime num
     }
 
     // 创建写者线程
-    var w_args = [_]ThreadArgs{undefined} ** num_writers;
-    // var writers = [_]std.Io.Future(void){} ** num_writers;
+    var w_args: [num_writers]ThreadArgs = @splat(undefined);
     var writers: std.ArrayList(std.Io.Future(void)) = .empty;
     defer writers.deinit(allocator);
     for (0..num_writers) |i| {
         w_args[i] = ThreadArgs{
             .io = io,
-            .mode = @enumFromInt(mode),
+            .mode = @fromBackingInt(@intCast(mode)),
             .num = num,
             .id = @intCast(i),
             .modulo = num_writers,
